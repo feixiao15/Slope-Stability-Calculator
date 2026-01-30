@@ -14,6 +14,8 @@ from matplotlib.patches import Circle, Polygon
 
 matplotlib.use('QtAgg')
 
+from bishop import BishopAnalyzer
+
 # ==========================================
 # 1. FELLENIUS BACKEND
 # ==========================================
@@ -220,7 +222,7 @@ class SlopeStabilityApp(QMainWindow):
         method_layout = QHBoxLayout()
         method_layout.addWidget(QLabel("Calculation Method"))
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Fellenius Method", "Taylor Stability Method"])
+        self.method_combo.addItems(["Fellenius Method", "Bishop Method", "Taylor Stability Method"])
         self.method_combo.currentIndexChanged.connect(self.on_method_change)
         method_layout.addWidget(self.method_combo)
         sidebar_layout.addLayout(method_layout)
@@ -334,8 +336,8 @@ class SlopeStabilityApp(QMainWindow):
         widget.setVisible(visible)
 
     def on_method_change(self, index):
-        is_taylor = (index == 1)
-        # Fellenius specific
+        is_taylor = (index == 2)
+        # Fellenius & Bishop: slices + grid + geometry
         self.sett_group.setVisible(not is_taylor)
         self.grid_group.setVisible(not is_taylor)
         self.toggle_field('ru', not is_taylor)
@@ -349,7 +351,8 @@ class SlopeStabilityApp(QMainWindow):
         
         # Initialize right side plot area
         self.reset_figure()
-        method_name = "Taylor Stability Method" if is_taylor else "Fellenius Method"
+        method_names = ["Fellenius Method", "Bishop Method", "Taylor Stability Method"]
+        method_name = method_names[index]
         self.result_label.setText(f"{method_name} | Select parameters and run analysis.")
         self.result_label.setStyleSheet("background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; padding: 10px; border: 1px solid #3e3e50; border-radius: 4px;")
 
@@ -392,9 +395,11 @@ class SlopeStabilityApp(QMainWindow):
             gamma = self.get_float('gamma')
             H = self.get_float('height')
 
-            if method_idx == 0: # FELLENIUS
+            if method_idx == 0:
                 self.run_fellenius(c, phi, gamma, H)
-            else: # TAYLOR
+            elif method_idx == 1:
+                self.run_bishop(c, phi, gamma, H)
+            else:
                 self.run_taylor(c, phi, gamma, H)
                 
         except Exception as e:
@@ -437,6 +442,43 @@ class SlopeStabilityApp(QMainWindow):
             self.result_label.setText("Fellenius Method | No valid slip surface found.")
         
         self.canvas.draw()
+
+    def run_bishop(self, c, phi, gamma, H):
+        ru = self.get_float('ru')
+        ratio = self.get_float('ratio')
+        toe = self.get_float('toe_ext')
+        crest = self.get_float('crest_ext')
+        slices = int(self.get_float('slices'))
+        
+        analyzer = BishopAnalyzer(c, phi, gamma, ru)
+        analyzer.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+        
+        gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
+        gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
+        
+        best, results = analyzer.find_critical_fos(slices, gx, gy, plot=False)
+        
+        if results:
+            Z = np.array([r[2] for r in results]).reshape(len(gx), len(gy)).T
+            contour = self.ax.contourf(gx, gy, Z, levels=20, cmap="viridis_r", alpha=0.8)
+            self.cbar = self.figure.colorbar(contour, ax=self.ax, fraction=0.046, pad=0.04)
+            self.cbar.set_label("FoS", color='white')
+            self.cbar.ax.yaxis.set_tick_params(color='white', labelcolor='white')
+        
+        poly = analyzer.surface_poly
+        self.ax.plot(poly[:, 0], poly[:, 1], 'w-', linewidth=3)
+        self.ax.fill_between(poly[:, 0], -10, poly[:, 1], color='#4a4a5a', alpha=0.5)
+        
+        if best:
+            circ = Circle(best['center'], best['radius'], fill=False, edgecolor='#ff4444', linewidth=2, linestyle='--')
+            self.ax.add_patch(circ)
+            self.ax.plot(best['center'][0], best['center'][1], 'rx')
+            self.result_label.setText(f"Bishop Method | Min FoS: {best['fos']:.3f}")
+        else:
+            self.result_label.setText("Bishop Method | No valid slip surface found.")
+        
+        self.canvas.draw()
+
     def plot_taylor_charts(self, solver, phi_in, beta_in, D_in, N_res):
         """
         Plot two Taylor charts
