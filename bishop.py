@@ -212,7 +212,7 @@ class BishopAnalyzer:
             if plot:
                 self.plot_result(best_circle, fos_results, center_grid_x, center_grid_y)
 
-        return best_circle
+        return best_circle, fos_results
 
     def plot_result(self, best_circle, fos_results, grid_x, grid_y):
         """(Helper) Visualize the search results"""
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     ratio = 1  # 1V:mH
     toe_width = 10
     n_slices = 20
-    center_grid_x = np.linspace(-5, 30, 20)
+    center_grid_x = np.linspace(-10, 30, 100)
     center_grid_y = np.linspace(0, 30, 20)
     plot = True
 
@@ -276,4 +276,4 @@ if __name__ == "__main__":
     # 方式二：去除“过坡脚”约束，对坡底宽度按 interval 遍历入口点
     interval = 2.0  # 坡底 x 步长 (m)
     entry_x_range = np.arange(-toe_width, 0.5, interval)
-    analyzer.find_critical_fos(n_slices, center_grid_x, center_grid_y, plot, entry_x_range=entry_x_range)
+    best, results = analyzer.find_critical_fos(n_slices, center_grid_x, center_grid_y, plot, entry_x_range=entry_x_range)
