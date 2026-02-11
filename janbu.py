@@ -1610,22 +1610,30 @@ class JanbuSolver:
 
 
 if __name__ == "__main__":
-    
-    # 1. 构建几何
-    gb = GeometryBuilder(slope_height=12.5, slope_ratio=1, bottom_extension=5.0, top_extension=20.0)
+    """
+    janbu.py 内置示例：
+    - 目的是构造一个“强度和几何都比较温和、接近 janbu_verification.py 教材算例量级”的圆弧滑动面，
+      用来单独检查 Janbu GPS 流程在圆弧模式下的收敛与中间量是否合理。
+    - 为了便于在命令行反复运行，本示例默认**关闭所有绘图**，只打印条分与迭代表。
+    """
+
+    # 1. 构建几何（与之前示例类似的 1:1 边坡，只是高度略小一点）
+    gb = GeometryBuilder(slope_height=8.0, slope_ratio=1.5, bottom_extension=5.0, top_extension=15.0)
     ground, region = gb.build()
 
-    # 2. 仅针对“一个特定圆弧滑动面”跑一遍正确流程（不搜索最小 FoS，不离散参与计算）
-    #    你只需要改这里的 center / x_entry 即可复现并排查流程。
-    gamma = 19.0
-    c_prime = 9.5
-    phi_prime = 33.8
-    ru = 0.4
-    n_slices = 10
-    q = 0.0
+    # 2. 圆弧滑动面与土性参数（量级参考 janbu_verification.py：c'≈1 kPa, φ'≈33.8°，不考虑孔压）
+    gamma = 18.0          # 土重度，保持常见取值
+    c_prime = 1.0         # kPa
+    phi_prime = 33.8      # deg
+    ru = 0.0              # 这里用 ru=0，简化为无孔压情形
+    n_slices = 4          # 条数与 janbu_verification.py 验证算例相同
+    q = 0.0               # 坡顶无均布超载
 
-    x_entry = 5.0           # 必须在坡底宽度 [0, L_bot] 内（本例 L_bot=5）
-    center = (15.0, 15.0)   # 圆心 (xc, yc)
+    # 估计一个“中等尺寸”的圆弧：
+    # - 入口取在坡脚附近（x_entry ≈ L_bot）
+    # - 圆心大致放在坡肩外侧上方，使弧线穿过坡趾并向坡后延伸
+    x_entry = 5.0              # 必须在坡底宽度 [0, L_bot] 内（本例 L_bot=5）
+    center = (11.0, 9.0)       # 经验估计的圆心 (xc, yc)，你可以在调试时微调
 
     fos, slices, meta = calculate_fos_for_circular_arc(
         ground_profile=ground,
@@ -1639,15 +1647,15 @@ if __name__ == "__main__":
         q=q,
         require_exit_at_crest=True,  # 约束：必须到达坡顶高度且穿出点在坡顶平台
         use_gps=True,
-        print_iteration_table=True,
-        plot_f_history=True,
-        gps_max_iter=3,
+        print_iteration_table=True,  # 打印 F0、各轮 Fk 及 ΔE、E、T 等表格
+        plot_f_history=True,        # 暂时关闭 F-iteration 曲线
+        gps_max_iter=20,             # 允许 GPS 至多迭代 20 轮以观察收敛行为
     )
 
     if slices is None or not np.isfinite(fos):
         raise RuntimeError(f"该特定圆弧无效或计算失败：meta={meta}")
 
-    # 3. 可视化：为画图临时采样圆弧点（仅用于显示，不参与计算）
+    # 3. 可视化
     x_exit = meta["x_exit"]
     xc, yc = center
     R = meta["radius"]
