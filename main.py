@@ -15,164 +15,12 @@ from matplotlib.patches import Circle, Polygon
 matplotlib.use('QtAgg')
 
 from bishop import BishopAnalyzer
+from fellenius import FelleniusAnalyzer
+from taylor import TaylorSolver
+from janbu import GeometryBuilder, find_critical_fos_circular_arc
 
-# ==========================================
-# 1. FELLENIUS BACKEND
-# ==========================================
-class FelleniusAnalyzer:
-    def __init__(self, c_prime, phi_prime, gamma, r_u=0.0):
-        self.c_prime = c_prime
-        self.phi_prime = phi_prime
-        self.phi_rad = np.radians(phi_prime)
-        self.tan_phi = np.tan(self.phi_rad)
-        self.gamma = gamma
-        self.r_u = r_u
-
-    def define_slope(self, height, ratio, toe_width=5.0, crest_width=10.0):
-        self.height = height
-        self.ratio = ratio
-        self.crest_x = height * ratio
-        self.surface_points = [
-            (-toe_width, 0),
-            (0, 0),
-            (self.crest_x, self.height),
-            (self.crest_x + crest_width, self.height)
-        ]
-        self.surface_poly = np.array(self.surface_points)
-
-    def _get_y_on_surface(self, x):
-        xp = self.surface_poly[:, 0]
-        fp = self.surface_poly[:, 1]
-        return np.interp(x, xp, fp)
-
-    def _calculate_fos(self, slice_data):
-        numerator = 0.0
-        denominator = 0.0
-        for s in slice_data:
-            W_i = s['W']
-            alpha_rad = s['alpha_rad']
-            l_i = s['l']
-            denominator += W_i * np.sin(alpha_rad)
-            cohesion_resistance = self.c_prime * l_i
-            ul_i = self.r_u * W_i / np.cos(alpha_rad)
-            N_prime_i = (W_i * np.cos(alpha_rad)) - ul_i
-            if N_prime_i < 0: N_prime_i = 0.0
-            friction_resistance = N_prime_i * self.tan_phi
-            numerator += cohesion_resistance + friction_resistance
-        if denominator <= 0: return np.inf
-        return numerator / denominator
-
-    def _slice_mass(self, center, radius, n_slices):
-        xc, yc = center
-        H = self.height
-        term_sq = radius ** 2 - (H - yc) ** 2
-        if term_sq < 0: return None
-        x_exit = xc + np.sqrt(term_sq)
-        if x_exit < self.crest_x: return None
-        x_entry = 0.0
-        total_width = x_exit - x_entry
-        if total_width <= 0: return None
-        b_width = total_width / n_slices
-        slices_data = []
-        for i in range(n_slices):
-            x_left = x_entry + i * b_width
-            x_mid = x_left + 0.5 * b_width
-            y_base_sq_term = radius ** 2 - (x_mid - xc) ** 2
-            if y_base_sq_term < 0: continue
-            y_base = yc - np.sqrt(y_base_sq_term)
-            m_tan = -(x_mid - xc) / (y_base - yc)
-            alpha_rad = np.arctan(m_tan)
-            y_top = self._get_y_on_surface(x_mid)
-            h_mid = y_top - y_base
-            if h_mid < 0: continue
-            W = h_mid * b_width * self.gamma
-            l = b_width / np.cos(alpha_rad)
-            slices_data.append({'W': W, 'alpha_rad': alpha_rad, 'l': l, 'b': b_width, 'x_mid': x_mid, 'h_mid': h_mid})
-        if not slices_data: return None
-        return slices_data
-
-    def find_critical_fos(self, n_slices, center_grid_x, center_grid_y):
-        min_fos = np.inf
-        best_circle = None
-        fos_results = []
-        for xc in center_grid_x:
-            for yc in center_grid_y:
-                radius = np.sqrt(xc ** 2 + yc ** 2)
-                slice_data = self._slice_mass((xc, yc), radius, n_slices)
-                if not slice_data:
-                    fos_results.append((xc, yc, np.nan))
-                    continue
-                fos = self._calculate_fos(slice_data)
-                fos_results.append((xc, yc, fos))
-                if fos < min_fos:
-                    min_fos = fos
-                    best_circle = {'center': (xc, yc), 'radius': radius, 'fos': fos}
-        return best_circle, fos_results
-
-# ==========================================
-# 2. TAYLOR BACKEND 
-# ==========================================
-class TaylorStabilityChart:
-    def __init__(self):
-        self.chart1_data = {
-            0: (np.array([53.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0]), np.array([0.181, 0.184, 0.193, 0.205, 0.218, 0.229, 0.241, 0.252, 0.261])),
-            5: (np.array([8.0, 12.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]), np.array([0, 0.045, 0.060, 0.082, 0.114, 0.137, 0.156, 0.173, 0.189, 0.204, 0.218])),
-            10: (np.array([10, 16.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]), np.array([0, 0.045, 0.060, 0.088, 0.110, 0.129, 0.147, 0.163, 0.178, 0.192])),
-            15: (np.array([15,22.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]), np.array([0, 0.040, 0.050, 0.066, 0.090, 0.109, 0.125, 0.141, 0.155, 0.169])),
-            20: (np.array([20, 28.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]), np.array([0, 0.040, 0.048, 0.075, 0.094, 0.111, 0.126, 0.140, 0.152])),
-            25: (np.array([25, 35.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]), np.array([0, 0.040, 0.055, 0.081, 0.098, 0.113, 0.126, 0.138]))
-        }
-        self.depth_coeffs = {53.0: [0.000, 1.0], 45.0: [0.011, 2.5], 30.0: [0.066, 2.7], 22.5: [0.119, 2.5], 15.0: [0.226, 2.5], 7.5: [0.324, 2.0]}
-
-    def _interp_beta(self, phi_key, beta):
-        beta_arr, n_arr = self.chart1_data[phi_key]
-        if phi_key == 0 and beta < 53: return 0.181
-        if beta < beta_arr[0]: return np.nan
-        return np.interp(beta, beta_arr, n_arr)
-
-    def _get_N_from_chart1(self, phi, beta):
-        known_phis = sorted(self.chart1_data.keys())
-        if phi >= 25: return self._interp_beta(25, beta)
-        if phi < 0: return 0.0
-        p_low = max([p for p in known_phis if p <= phi], default=0)
-        p_high = min([p for p in known_phis if p >= phi], default=25)
-        N_low = self._interp_beta(p_low, beta)
-        if p_low == p_high: return N_low
-        N_high = self._interp_beta(p_high, beta)
-        if np.isnan(N_low) or np.isnan(N_high):
-            if not np.isnan(N_low): return N_low
-            if not np.isnan(N_high): return N_high
-            return 0.0
-        return N_low + (phi - p_low) / (p_high - p_low) * (N_high - N_low)
-
-    def _calculate_depth_N(self, beta_key, D):
-        if beta_key not in self.depth_coeffs: return 0.181
-        if D < 1.0: D = 1.0
-        A, k = self.depth_coeffs[beta_key]
-        return max(0, 0.181 - A * (D ** -k))
-
-    def get_stability_number(self, phi, beta, D=1.0):
-        if phi == 0 and beta < 53:
-            beta_keys = sorted(self.depth_coeffs.keys())
-            b_low = max([b for b in beta_keys if b <= beta], default=7.5)
-            b_high = min([b for b in beta_keys if b >= beta], default=53)
-            N_low = self._calculate_depth_N(b_low, D)
-            N_high = self._calculate_depth_N(b_high, D)
-            if b_low == b_high: return N_low
-            return N_low + (beta - b_low) / (b_high - b_low) * (N_high - N_low)
-        else:
-            return self._get_N_from_chart1(phi, beta)
-
-class TaylorSolver:
-    def __init__(self):
-        self.chart = TaylorStabilityChart()
-
-    def solve(self, c, phi, gamma, beta, H, D=1.0):
-        N = self.chart.get_stability_number(phi, beta, D)
-        if N is None or np.isnan(N) or N <= 1e-5:
-            return 999.0, N 
-        Fs = c / (N * gamma * H)
-        return Fs, N
+# Fellenius / Taylor 的具体实现已移动到独立模块 `fellenius.py` / `taylor.py`，
+# 这里不再重复定义，仅在后续 GUI 逻辑中直接实例化并调用这些 solver。
 
 # ==========================================
 # 3. GUI IMPLEMENTATION
@@ -222,7 +70,12 @@ class SlopeStabilityApp(QMainWindow):
         method_layout = QHBoxLayout()
         method_layout.addWidget(QLabel("Calculation Method"))
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Fellenius Method", "Bishop Method", "Taylor Stability Method"])
+        self.method_combo.addItems([
+            "Fellenius Method",
+            "Bishop Method",
+            "Taylor Stability Method",
+            "Janbu GPS Method",
+        ])
         self.method_combo.currentIndexChanged.connect(self.on_method_change)
         method_layout.addWidget(self.method_combo)
         sidebar_layout.addLayout(method_layout)
@@ -256,7 +109,7 @@ class SlopeStabilityApp(QMainWindow):
         # Fellenius specific geometry
         self.add_input(f2, "Slope Ratio (1V:mH)", "0.363", "ratio") 
         self.add_input(f2, "Toe Extension [m]", "5.0", "toe_ext")
-        self.add_input(f2, "Crest Extension [m]", "10.0", "crest_ext")
+        self.add_input(f2, "Crest Extension [m]", "30.0", "crest_ext")
         
         # Taylor specific geometry
         self.add_input(f2, "Slope Angle (β) [°]", "30.0", "beta")
@@ -336,6 +189,7 @@ class SlopeStabilityApp(QMainWindow):
         widget.setVisible(visible)
 
     def on_method_change(self, index):
+        # index: 0=Fellenius, 1=Bishop, 2=Taylor, 3=Janbu
         is_taylor = (index == 2)
         # Fellenius & Bishop: slices + grid + geometry
         self.sett_group.setVisible(not is_taylor)
@@ -351,7 +205,12 @@ class SlopeStabilityApp(QMainWindow):
         
         # Initialize right side plot area
         self.reset_figure()
-        method_names = ["Fellenius Method", "Bishop Method", "Taylor Stability Method"]
+        method_names = [
+            "Fellenius Method",
+            "Bishop Method",
+            "Taylor Stability Method",
+            "Janbu GPS Method",
+        ]
         method_name = method_names[index]
         self.result_label.setText(f"{method_name} | Select parameters and run analysis.")
         self.result_label.setStyleSheet("background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; padding: 10px; border: 1px solid #3e3e50; border-radius: 4px;")
@@ -399,8 +258,10 @@ class SlopeStabilityApp(QMainWindow):
                 self.run_fellenius(c, phi, gamma, H)
             elif method_idx == 1:
                 self.run_bishop(c, phi, gamma, H)
-            else:
+            elif method_idx == 2:
                 self.run_taylor(c, phi, gamma, H)
+            else:
+                self.run_janbu(c, phi, gamma, H)
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -596,6 +457,73 @@ class SlopeStabilityApp(QMainWindow):
              self.result_label.setStyleSheet("color: #5a9fd4; background-color: rgba(30, 30, 46, 0.9); padding: 10px; border: 1px solid #5a9fd4; border-radius: 4px;")
         else:
              self.result_label.setStyleSheet("color: #2ecc71; background-color: rgba(30, 30, 46, 0.9); font-weight: bold; padding: 10px; border: 1px solid #2ecc71; border-radius: 4px;")
+
+    def run_janbu(self, c, phi, gamma, H):
+        """
+        使用 Janbu GPS 圆弧搜索接口，在给定圆心搜索网格内寻找最小 FoS。
+        几何与输入参数风格与 Bishop/Fellenius 保持一致：
+        - H: 坡高
+        - ratio: 坡度比 1V:mH
+        - toe_ext: 坡脚前平台长度 -> GeometryBuilder.bottom_extension
+        - crest_ext: 坡顶后平台长度 -> GeometryBuilder.top_extension
+        - slices: 条分数
+        - grid_x/y_*: 圆心搜索范围
+        """
+        ru = self.get_float('ru')
+        ratio = self.get_float('ratio')
+        toe = self.get_float('toe_ext')
+        crest = self.get_float('crest_ext')
+        slices = int(self.get_float('slices'))
+
+        # 1. 构建 Janbu 几何（ground_profile 供计算，region 可用于填充）
+        gb = GeometryBuilder(slope_height=H, slope_ratio=ratio, bottom_extension=toe, top_extension=crest)
+        ground_profile, _region = gb.build()
+        gp = np.asarray(ground_profile, dtype=float)
+
+        # 2. 圆心搜索网格（与 Bishop/Fellenius 一样）
+        gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
+        gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
+
+        # 3. Janbu GPS 圆弧搜索（入口默认取坡脚点，require_exit_at_crest=True）
+        best, results = find_critical_fos_circular_arc(
+            ground_profile=ground_profile,
+            gamma=gamma,
+            c_prime=c,
+            phi_prime=phi,
+            ru=ru,
+            n_slices=slices,
+            center_grid_x=gx,
+            center_grid_y=gy,
+            entry_x_range=None,        # 默认仅从坡脚出发
+            q=0.0,
+            use_gps=True,
+            gps_tolerance=1e-6,
+            gps_max_iter=80,
+            require_exit_at_crest=True,
+        )
+
+        # 4. 画 FoS 等高线
+        if results:
+            Z = np.array([r[2] for r in results]).reshape(len(gx), len(gy)).T
+            contour = self.ax.contourf(gx, gy, Z, levels=20, cmap="viridis_r", alpha=0.8)
+            self.cbar = self.figure.colorbar(contour, ax=self.ax, fraction=0.046, pad=0.04)
+            self.cbar.set_label("FoS", color='white')
+            self.cbar.ax.yaxis.set_tick_params(color='white', labelcolor='white')
+
+        # 5. 画几何（仅地表线，填充至 y=0）
+        self.ax.plot(gp[:, 0], gp[:, 1], 'w-', linewidth=3)
+        self.ax.fill_between(gp[:, 0], 0.0, gp[:, 1], color='#4a4a5a', alpha=0.5)
+
+        # 6. 画最危险滑动圆弧
+        if best:
+            circ = Circle(best['center'], best['radius'], fill=False, edgecolor='#ff4444', linewidth=2, linestyle='--')
+            self.ax.add_patch(circ)
+            self.ax.plot(best['center'][0], best['center'][1], 'rx')
+            self.result_label.setText(f"Janbu GPS Method | Min FoS: {best['fos']:.3f}")
+        else:
+            self.result_label.setText("Janbu GPS Method | No valid slip surface found.")
+
+        self.canvas.draw()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

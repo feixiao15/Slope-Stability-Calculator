@@ -215,7 +215,8 @@ class FelleniusAnalyzer:
             if plot:
                 self.plot_result(best_circle, fos_results, center_grid_x, center_grid_y)
 
-        return best_circle
+        # 为 GUI main.py 提供与 BishopAnalyzer 一致的接口：返回 (best_circle, fos_results)
+        return best_circle, fos_results
 
     def plot_result(self, best_circle, fos_results, grid_x, grid_y):
         """(Helper) Visualize the search results"""
@@ -257,40 +258,40 @@ class FelleniusAnalyzer:
 
         plt.show()
 
-# --- 1. Set analysis parameters ---
+if __name__ == "__main__":
+    # --- Example usage: keep CLI demo, but adapt to new return signature (best, fos_results) ---
 
-# Soil parameters
-c = 20.0
-soil_type = 1  # 1 is drained and 0 is undrained
-phi_prime = 10 if soil_type else 0
-gamma = 19.0
-r_u = 0
+    # Soil parameters
+    c = 20.0
+    soil_type = 1  # 1 is drained and 0 is undrained
+    phi_prime = 10 if soil_type else 0
+    gamma = 19.0
+    r_u = 0
 
-# Geometric parameters
-slope_height = 6.0
-slope_ratio = np.tan(np.radians(90-70)) # V : mH
+    # Geometric parameters
+    slope_height = 6.0
+    slope_ratio = np.tan(np.radians(90 - 70))  # V : mH
 
-# Analysis parameters
-num_slices = 20 # Number of slices as per the example problem
+    # Analysis parameters
+    num_slices = 20  # Number of slices as per the example problem
 
-# (Step 2) Define search grid
-grid_x = np.linspace(0, 30, 20)
-grid_y = np.linspace(0, 30, 20)
+    # (Step 2) Define search grid
+    grid_x = np.linspace(0, 30, 20)
+    grid_y = np.linspace(0, 30, 20)
 
+    # --- 2. Run analysis ---
 
-# --- 2. Run analysis ---
+    # Initialize analyzer
+    analyzer = FelleniusAnalyzer(c, phi_prime, gamma, r_u)
 
-# Initialize analyzer
-analyzer = FelleniusAnalyzer(c, phi_prime, gamma, r_u)
+    # Define slope
+    analyzer.define_slope(slope_height, slope_ratio)
 
-# Define slope
-analyzer.define_slope(slope_height, slope_ratio)
-
-# Find the most dangerous slip surface
-# This will automatically complete Steps 2, 3, 4, 5, and 6
-critical_circle = analyzer.find_critical_fos(
-    n_slices=num_slices,
-    center_grid_x=grid_x,
-    center_grid_y=grid_y,
-    plot=True
-)
+    # Find the most dangerous slip surface
+    # This will automatically complete Steps 2, 3, 4, 5, and 6
+    critical_circle, fos_results = analyzer.find_critical_fos(
+        n_slices=num_slices,
+        center_grid_x=grid_x,
+        center_grid_y=grid_y,
+        plot=True,
+    )
