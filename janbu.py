@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 
 
 class GeometryBuilder:
@@ -524,28 +525,29 @@ def find_critical_fos_circular_arc(
     center_grid_y,
     entry_x_range=None,
     q=0.0,
-    n_arc_points=120,
     use_gps=True,
     gps_tolerance=1e-6,
     gps_max_iter=80,
     lambda_thrust=0.33,
+    require_exit_at_crest=True,
 ):
     """
     像 bishop.py 一样：在约束条件下搜索 valid 的圆弧滑动面，并返回最小 FoS。
+
+    与单弧计算 calculate_fos_for_circular_arc 使用同一套几何与求解路径（圆弧条分 + GPS 圆弧模式），
+    避免搜索结果与“按最危险 slip 单算”不一致（如出现异常负 FoS）。
 
     搜索变量：
     - 圆心 (xc, yc) ∈ center_grid_x × center_grid_y
     - 坡底入口 x_entry ∈ entry_x_range（要求位于坡底宽度 [A.x, B.x] 内）
 
     圆弧构造：
-    - 入口点固定为 (x_entry, 0)
-    - 半径由圆心到入口点确定
-    - 穿出点为圆与地表折线的交点中，入口右侧 x 最大者（可在坡面或坡顶平台穿出）
-    - 圆弧离散为折线 slip_profile，供 JanbuPreprocessor 条分
+    - 入口点 (x_entry, 0)，半径 = 圆心到入口点距离
+    - 穿出点：require_exit_at_crest=True 时要求弧在坡顶高度穿出且 x_exit >= crest_x
 
     返回：
-    - best: dict 或 None
-    - fos_results: list[(xc, yc, fos_min_over_entry)]，用于画等高线
+    - best: dict 或 None（含 center, radius, x_entry, fos）
+    - fos_results: list[(xc, yc, fos_min_over_entry)]，用于画等高线（无效为 np.nan）
     """
     gp = np.asarray(ground_profile, dtype=float)
     A = gp[0]
@@ -554,7 +556,7 @@ def find_critical_fos_circular_arc(
     x_max_bot = float(max(A[0], B[0]))
 
     if entry_x_range is None:
-        entry_x_list = np.array([x_max_bot], dtype=float)  # 默认从坡脚点出发
+        entry_x_list = np.array([x_max_bot], dtype=float)  # 默认从坡脚侧出发
     else:
         entry_x_list = np.atleast_1d(np.asarray(entry_x_range, dtype=float))
 
@@ -576,21 +578,19 @@ def find_critical_fos_circular_arc(
                     continue
 
                 try:
-                    slip_profile = build_slip_profile_circular_arc(
+                    # 与单弧计算一致：直接用圆弧条分，不经过折线离散，保证同一套几何与 F 结果
+                    slices, meta = pre.slice_along_circular_arc(
                         ground_profile=ground_profile,
                         center=(float(xc), float(yc)),
                         x_entry=x_entry,
-                        n_points=n_arc_points,
-                    )
-                    slices = pre.slice_along_poly_surface(
-                        ground_profile=ground_profile,
-                        slip_profile=slip_profile,
                         n_slices=n_slices,
                         q=q,
+                        require_exit_at_crest=require_exit_at_crest,
                     )
-                    if not slices:
+                    if slices is None:
                         continue
 
+                    radius = float(meta["radius"])
                     F0, conv0, it0 = solver.calculate_fos_initial(
                         slices, F_init=1.0, tolerance=gps_tolerance, max_iter=50
                     )
@@ -600,19 +600,22 @@ def find_critical_fos_circular_arc(
                     if use_gps:
                         F, converged, iterations, _ = solver.calculate_fos_gps(
                             slices=slices,
-                            slip_profile=slip_profile,
+                            slip_profile=None,
+                            ground_profile=ground_profile,
                             F_init=F0,
                             tolerance=gps_tolerance,
                             max_iter=gps_max_iter,
                             lambda_thrust=lambda_thrust,
                             print_iteration_table=False,
+                            arc_center=(float(xc), float(yc)),
+                            arc_radius=radius,
                         )
                         fos = float(F)
                     else:
                         fos = float(F0)
 
-                    if np.isfinite(fos) and fos < best_fos_here:
-                        radius = float(np.hypot(float(xc) - x_entry, float(yc) - 0.0))
+                    # 只接受物理有效的 FoS：正数且有限，避免异常负值被当作“最小”
+                    if np.isfinite(fos) and fos > 0 and fos < best_fos_here:
                         best_fos_here = fos
                         best_here = {
                             "center": (float(xc), float(yc)),
@@ -622,10 +625,9 @@ def find_critical_fos_circular_arc(
                             "use_gps": bool(use_gps),
                         }
                 except Exception:
-                    # 构造/条分/求解失败都视为 invalid，继续搜索
                     continue
 
-            fos_results.append((float(xc), float(yc), best_fos_here if np.isfinite(best_fos_here) else np.nan))
+            fos_results.append((float(xc), float(yc), best_fos_here if (np.isfinite(best_fos_here) and best_fos_here < np.inf) else np.nan))
 
             if best_here is not None and best_here["fos"] < min_fos:
                 min_fos = best_here["fos"]
@@ -923,6 +925,63 @@ def plot_slope_and_slip(
     return ax
 
 
+def plot_janbu_search_result(
+    ground_profile,
+    best_circle,
+    fos_results,
+    center_grid_x,
+    center_grid_y,
+    slope_region=None,
+    title="Janbu - Critical Slip Surface Search",
+):
+    """
+    绘制 Janbu 圆心搜索结果，风格与 bishop.py 的 plot_result 一致：
+    等高线图（FoS 分布）、坡面、最危险滑动圆弧及圆心。
+    """
+    fig, ax = plt.subplots(figsize=(14, 8))
+    gp = np.asarray(ground_profile, dtype=float)
+
+    # 1. FoS 等高线（仅在有有效数据时绘制）
+    if fos_results:
+        Z = np.array([r[2] for r in fos_results], dtype=float).reshape(len(center_grid_x), len(center_grid_y)).T
+        if np.any(np.isfinite(Z)):
+            contours = ax.contourf(center_grid_x, center_grid_y, Z, levels=20, cmap="viridis_r", alpha=0.7)
+            fig.colorbar(contours, ax=ax, label="Factor of Safety (FoS)")
+
+    # 2. 坡面与土体区域
+    if slope_region is not None:
+        reg = np.asarray(slope_region, dtype=float)
+        ax.fill(reg[:, 0], reg[:, 1], color="#c7c7c7", alpha=0.35, label="Soil Region")
+    ax.plot(gp[:, 0], gp[:, 1], "k-", linewidth=3, label="Ground Surface")
+
+    # 3. 最危险滑动圆弧与圆心
+    if best_circle is not None:
+        center = best_circle["center"]
+        radius = best_circle["radius"]
+        fos = best_circle["fos"]
+        slip_circle = Circle(
+            center, radius, fill=False, edgecolor="red",
+            linewidth=2, linestyle="--", label=f"Critical Circle (FoS={fos:.3f})"
+        )
+        ax.add_patch(slip_circle)
+        ax.plot(center[0], center[1], "r+", markersize=15, label="Critical circle center")
+
+    ax.set_title(title)
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.legend()
+    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.set_aspect("equal")
+
+    x_min, x_max = gp[:, 0].min(), gp[:, 0].max()
+    y_min, y_max = gp[:, 1].min(), gp[:, 1].max()
+    if len(center_grid_y) > 0:
+        y_max = max(y_max, np.max(center_grid_y))
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(min(0.0, y_min) - (y_max - y_min) * 0.2, y_max + (y_max - y_min) * 0.2)
+    plt.show()
+
+
 class JanbuSolver:
     """
     Janbu GPS – 模块二：核心解算器 (Core Solver)
@@ -1062,9 +1121,11 @@ class JanbuSolver:
                 # n_α,i = cos²α_i (1 + tan α_i tan φ'_i / F)
                 n_alpha_i = (cos_alpha ** 2) * (1.0 + tan_alpha * tan_phi_i / F)
                 
-                # A_i = [c'_i + (p_i - u_i) tan φ'_i] Δx_i
+                # A_i = [c'_i + (p_i - u_i) tan φ'_i] Δx_i，物理上不允许出现负值，若为负则截断为 0
                 A_i = (c_i + (p_i - u_i) * tan_phi_i) * dx_i
-                
+                if A_i < 0.0:
+                    A_i = 0.0
+                A_i = max(A_i, 0.0)
                 # B_i = p_i Δx_i tan α_i + ΔQ_i
                 B_i = p_i * dx_i * tan_alpha + dQ_i
                 
@@ -1278,6 +1339,8 @@ class JanbuSolver:
         """用新的 t 计算新的安全系数 F_new。"""
         tan_alpha = np.tan(alpha)
         A2 = (c + (p + t_new - u) * tan_phi) * dx
+        # A2 逐条截断到不小于 0，防止出现物理上无意义的负抗力
+        A2 = np.maximum(A2, 0.0)
         B2 = dQ + (p + t_new) * dx * tan_alpha
         
         denom = np.sum(B2)
@@ -1416,6 +1479,7 @@ class JanbuSolver:
         cos_alpha = np.cos(alpha)
         n_alpha_0 = (cos_alpha**2) * (1.0 + (tan_alpha * tan_phi) / F_old)
         A_0 = (c + (p - u) * tan_phi) * dx
+        A_0 = np.maximum(A_0, 0.0)
         B_0 = dQ + p * dx * tan_alpha
         sum_A_over_n = np.sum(A_0 / n_alpha_0)
         sum_B_0 = np.sum(B_0)
@@ -1611,81 +1675,66 @@ class JanbuSolver:
 
 if __name__ == "__main__":
     """
-    janbu.py 内置示例：
-    - 目的是构造一个“强度和几何都比较温和、接近 janbu_verification.py 教材算例量级”的圆弧滑动面，
-      用来单独检查 Janbu GPS 流程在圆弧模式下的收敛与中间量是否合理。
-    - 为了便于在命令行反复运行，本示例默认**关闭所有绘图**，只打印条分与迭代表。
+    janbu.py 内置示例：在圆心搜索范围内寻找最小 FoS，输出与 bishop.py 风格一致。
+    搜索与单弧计算使用同一套圆弧条分 + GPS 圆弧模式，保证“最危险 slip”单算结果与搜索一致。
     """
 
-    # 1. 构建几何（与之前示例类似的 1:1 边坡，只是高度略小一点）
+    # 1. 构建几何
     gb = GeometryBuilder(slope_height=8.0, slope_ratio=1.5, bottom_extension=5.0, top_extension=15.0)
     ground, region = gb.build()
 
-    # 2. 圆弧滑动面与土性参数（量级参考 janbu_verification.py：c'≈1 kPa, φ'≈33.8°，不考虑孔压）
-    gamma = 18.0          # 土重度，保持常见取值
-    c_prime = 1.0         # kPa
-    phi_prime = 33.8      # deg
-    ru = 0.0              # 这里用 ru=0，简化为无孔压情形
-    n_slices = 4          # 条数与 janbu_verification.py 验证算例相同
-    q = 0.0               # 坡顶无均布超载
+    # 2. 土性参数
+    gamma = 18.0
+    c_prime = 1.0
+    phi_prime = 33.8
+    ru = 0.0
+    n_slices = 4
+    q = 0.0
 
-    # 估计一个“中等尺寸”的圆弧：
-    # - 入口取在坡脚附近（x_entry ≈ L_bot）
-    # - 圆心大致放在坡肩外侧上方，使弧线穿过坡趾并向坡后延伸
-    x_entry = 5.0              # 必须在坡底宽度 [0, L_bot] 内（本例 L_bot=5）
-    center = (11.0, 9.0)       # 经验估计的圆心 (xc, yc)，你可以在调试时微调
+    # 3. 圆心搜索范围（与 bishop 类似：网格 + 可选入口点范围）
+    center_grid_x = np.linspace(0, 25.0, 30)
+    center_grid_y = np.linspace(1.0, 15.0, 20)
+    # 坡底入口 x：本例坡底为 [0, 5]，在坡脚附近取若干点
+    entry_x_range = np.linspace(0.0, 5.0, 6)
+    plot = True
 
-    fos, slices, meta = calculate_fos_for_circular_arc(
+    print("\n--- Starting Janbu search (arc through crest) ---")
+    print(f"Search grid: {len(center_grid_x)} (x) × {len(center_grid_y)} (y) × {len(entry_x_range)} (entry_x)")
+
+    best, fos_results = find_critical_fos_circular_arc(
         ground_profile=ground,
         gamma=gamma,
         c_prime=c_prime,
         phi_prime=phi_prime,
         ru=ru,
         n_slices=n_slices,
-        center=center,
-        x_entry=x_entry,
+        center_grid_x=center_grid_x,
+        center_grid_y=center_grid_y,
+        entry_x_range=entry_x_range,
         q=q,
-        require_exit_at_crest=True,  # 约束：必须到达坡顶高度且穿出点在坡顶平台
         use_gps=True,
-        print_iteration_table=True,  # 打印 F0、各轮 Fk 及 ΔE、E、T 等表格
-        plot_f_history=True,        # 暂时关闭 F-iteration 曲线
-        gps_max_iter=20,             # 允许 GPS 至多迭代 20 轮以观察收敛行为
+        gps_tolerance=1e-6,
+        gps_max_iter=80,
+        require_exit_at_crest=True,
     )
 
-    if slices is None or not np.isfinite(fos):
-        raise RuntimeError(f"该特定圆弧无效或计算失败：meta={meta}")
-
-    # 3. 可视化
-    x_exit = meta["x_exit"]
-    xc, yc = center
-    R = meta["radius"]
-    xs_plot = np.linspace(x_entry, x_exit, 200)
-    ys_plot = yc - np.sqrt(np.maximum(0.0, R * R - (xs_plot - xc) ** 2))
-    slip_profile_plot = np.column_stack([xs_plot, ys_plot])
-    plot_slope_and_slip(ground_profile=ground, slip_profile=slip_profile_plot, slope_region=region, show=True)
-
-    print("=" * 60)
-    print("Janbu 方法 - 预处理结果（土条数据）")
-    print("=" * 60)
-    print("i\t x_mid\t  alpha(deg)\t   p(kPa)\t  W(kN/m)")
-    for i, s in enumerate(slices, start=1):
-        print(f"{i:02d}\t{s['x_mid']:.3f}\t{s['alpha_deg']:.3f}\t{s['p']:.3f}\t{s['W']:.3f}")
-    
-    # 4. 输出该特定圆弧的 FoS（包含 F0 与 GPS 结果）
-    print("\n" + "=" * 60)
-    print("Janbu 方法 - FOS 计算结果")
-    print("=" * 60)
-    print(f"圆心 center: {center}")
-    print(f"入口 x_entry: {x_entry:.3f}")
-    print(f"穿出 x_exit: {meta['x_exit']:.3f} (crest_x={meta['crest_x']:.3f}, H={meta['H']:.3f})")
-    print(f"半径 R: {meta['radius']:.3f}")
-    if meta.get('use_gps'):
-        F0 = meta.get('F0', np.nan)
-        print(f"初始化安全系数 F0(t=0): {F0:.6f}")
-        print(f"GPS 完整迭代安全系数 F: {fos:.6f}")
-        print(f"收敛状态: {'已收敛' if meta.get('converged') else '未收敛（达到最大迭代次数）'}")
-        print(f"迭代次数: {meta.get('iterations')}")
+    print("--- Search complete ---")
+    if best is None:
+        print("No valid slip surface found in the defined grid.")
+        print("Try adjusting center_grid_x, center_grid_y, or entry_x_range.")
     else:
-        print(f"FoS (F0, t=0): {fos:.6f}")
-    print("=" * 60)
+        print(f"Minimum safety factor (FoS_min): {best['fos']:.3f}")
+        print(f"Most dangerous center O(x,y): ({best['center'][0]:.2f}, {best['center'][1]:.2f})")
+        print(f"Most dangerous radius R: {best['radius']:.2f}")
+        print(f"Entry point x_entry: {best['x_entry']:.2f}")
+        if plot and fos_results:
+            plot_janbu_search_result(
+                ground_profile=ground,
+                best_circle=best,
+                fos_results=fos_results,
+                center_grid_x=center_grid_x,
+                center_grid_y=center_grid_y,
+                slope_region=region,
+                title="Janbu - Critical Slip Surface Search",
+            )
 

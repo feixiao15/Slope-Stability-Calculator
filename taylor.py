@@ -234,11 +234,15 @@ class TaylorSolver:
               gamma: float,
               beta: float,
               H: float,
-              D: float = 1.0) -> float:
+              D: float = 1.0):
         """
         Based on inputs c, φ, γ, β, H, D:
         1) Automatically determine whether to use Chart 1 or Chart 2 based on φ, β, D and calculate N;
         2) Then calculate factor of safety using Fs = c / (N * γ * H).
+
+        为了与 GUI `main.py` 中的调用方式兼容，本函数返回 `(Fs, N)` 二元组：
+        - Fs: 安全系数
+        - N : 稳定数
         """
         # 1. First get N from Taylor chart based on φ, β, D (internally automatically distinguishes Chart 1 / Chart 2)
         N = self.get_stability_number(phi, beta, D)
@@ -251,10 +255,12 @@ class TaylorSolver:
 
         # 2. Boundary check
         if N is None or np.isnan(N) or N <= 0:
-            return 999.0  # Indicates extremely stable
+            # Extremely stable: return a large Fs and the computed/invalid N
+            return 999.0, N
 
         # 3. Calculate Fs based on N
-        return self._calculate_fos_from_N(c, gamma, H, N)
+        Fs = self._calculate_fos_from_N(c, gamma, H, N)
+        return Fs, N
 
     # Optional: keep old name, internally call solve (to avoid breaking existing external code)
     def calculate_fos_from_chart(self,
@@ -280,7 +286,9 @@ def calculate_fos_taylor(c, phi, gamma, H, beta, D=1.0, analyzer=None):
     if analyzer is not None:
         solver.chart = analyzer
     # Here strictly follows the required parameter set: c, phi, gamma, beta, H, D
-    return solver.solve(c, phi, gamma, beta, H, D)
+    Fs, _N = solver.solve(c, phi, gamma, beta, H, D)
+    # 为向后兼容，旧的 calculate_fos_taylor 仅返回 Fs
+    return Fs
 
 
 def calculate_fos_from_formula(c, gamma, H, N):
@@ -308,7 +316,7 @@ if __name__ == "__main__":
     N = solver.get_stability_number(phi, beta, D)
 
     # --- Call class method to calculate Fs ---
-    final_fos = solver.solve(c, phi, gamma, beta, H, D)
+    final_fos, N = solver.solve(c, phi, gamma, beta, H, D)
 
     print(f"Known parameters:")
     print(f"  c (Cohesion) = {c} kPa")
