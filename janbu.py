@@ -1123,8 +1123,6 @@ class JanbuSolver:
                 
                 # A_i = [c'_i + (p_i - u_i) tan φ'_i] Δx_i，物理上不允许出现负值，若为负则截断为 0
                 A_i = (c_i + (p_i - u_i) * tan_phi_i) * dx_i
-                if A_i < 0.0:
-                    A_i = 0.0
                 A_i = max(A_i, 0.0)
                 # B_i = p_i Δx_i tan α_i + ΔQ_i
                 B_i = p_i * dx_i * tan_alpha + dQ_i

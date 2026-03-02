@@ -271,7 +271,8 @@ class TaylorSolver:
                                  beta: float,
                                  D: float = 1.0) -> float:
         """Compatible with old interface, equivalent to solve."""
-        return self.solve(c, phi, gamma, beta, H, D)
+        Fs, _N = self.solve(c, phi, gamma, beta, H, D)
+        return Fs
 
     # --------- Optional: wrap original verification plotting ---------
     def plot_verification(self):

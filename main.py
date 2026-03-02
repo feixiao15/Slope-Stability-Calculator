@@ -279,7 +279,7 @@ class SlopeStabilityApp(QMainWindow):
         gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
         gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
         
-        best, results = analyzer.find_critical_fos(slices, gx, gy)
+        best, results = analyzer.find_critical_fos(slices, gx, gy, plot=False)
 
         # Plot Heatmap
         if results:
