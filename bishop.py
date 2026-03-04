@@ -140,7 +140,7 @@ class BishopAnalyzer:
 
         return slices_data
 
-    def find_critical_fos(self, n_slices, center_grid_x, center_grid_y, plot=True, entry_x_range=None):
+    def find_critical_fos(self, n_slices, center_grid_x, center_grid_y, plot=True, entry_x_range=None, center=None, x_entry_single=None):
         """
         Parameters:
         n_slices (int): Number of slices for each arc
@@ -150,10 +150,45 @@ class BishopAnalyzer:
         entry_x_range (array-like or None): 坡底入口点 x 的遍历序列；None 表示仅过坡脚 (0,0)。
             例如 np.arange(-toe_width, 0.5, interval) 表示在坡底宽度上按 interval 步长遍历。
         """
+        # 若显式给定圆心（以及可选入口 x_entry_single），则只计算该圆心对应的滑动面 FoS
+        if center is not None:
+            xc, yc = map(float, center)
+            if x_entry_single is None:
+                # 未指定入口，则默认过坡脚 (0,0)
+                x_entry_use = 0.0
+            else:
+                x_entry_use = float(x_entry_single)
+
+            y_entry = self._get_y_on_surface(x_entry_use)
+            radius = float(np.sqrt((xc - x_entry_use) ** 2 + (yc - y_entry) ** 2))
+
+            slice_data = self._slice_mass((xc, yc), radius, n_slices, x_entry=x_entry_use)
+            if not slice_data:
+                best_circle = None
+                fos_val = np.nan
+            else:
+                fos_val = float(self._calculate_fos(slice_data))
+                best_circle = {
+                    "center": (xc, yc),
+                    "radius": radius,
+                    "fos": fos_val,
+                    "x_entry": x_entry_use,
+                }
+
+            fos_results = [(xc, yc, fos_val)]
+
+            print("\n--- Bishop single-center evaluation ---")
+            print(f"Center O(x,y) = ({xc:.3f}, {yc:.3f}), R = {radius:.3f}, x_entry = {x_entry_use:.3f}, FoS = {fos_val:.6f}")
+
+            if plot and best_circle is not None:
+                self.plot_result(best_circle, fos_results, np.array([xc]), np.array([yc]))
+
+            return best_circle, fos_results
+
         # 未指定时保持“过坡脚”约束；指定后在该序列上遍历入口点，解除“过坡脚”约束
         if entry_x_range is None:
             entry_x_list = np.array([0.0])
-            print(f"\n--- Starting search (arc through toe) ---")
+            print("\n--- Starting search (arc through toe) ---")
         else:
             entry_x_list = np.atleast_1d(entry_x_range)
             print(f"\n--- Starting search (entry points along toe width: {len(entry_x_list)} points) ---")
@@ -255,12 +290,12 @@ class BishopAnalyzer:
         plt.show()
 
 if __name__ == "__main__":
-    c_prime = 20.0
-    phi_prime = 10.0
-    gamma = 19.0
+    c_prime = 1
+    phi_prime = 33.8
+    gamma = 18
     r_u = 0.0
-    height = 6
-    ratio = 1  # 1V:mH
+    height = 8
+    ratio = 1.5  # 1V:mH
     toe_width = 10
     n_slices = 20
     center_grid_x = np.linspace(-10, 30, 100)

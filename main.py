@@ -66,6 +66,18 @@ class SlopeStabilityApp(QMainWindow):
         title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         sidebar_layout.addWidget(title)
 
+        # View Mode Selector
+        view_layout = QHBoxLayout()
+        view_layout.addWidget(QLabel("View Mode"))
+        self.view_combo = QComboBox()
+        self.view_combo.addItems([
+            "Main",
+            "Evaluation",
+        ])
+        self.view_combo.currentIndexChanged.connect(self.on_view_change)
+        view_layout.addWidget(self.view_combo)
+        sidebar_layout.addLayout(view_layout)
+
         # Method Selector
         method_layout = QHBoxLayout()
         method_layout.addWidget(QLabel("Calculation Method"))
@@ -79,6 +91,8 @@ class SlopeStabilityApp(QMainWindow):
         self.method_combo.currentIndexChanged.connect(self.on_method_change)
         method_layout.addWidget(self.method_combo)
         sidebar_layout.addLayout(method_layout)
+
+ 
 
         # Inputs Scroll Area
         scroll = QScrollArea()
@@ -95,8 +109,8 @@ class SlopeStabilityApp(QMainWindow):
         g1 = self.create_group("Soil Properties", self.form_layout)
         f1 = QFormLayout()
         self.add_input(f1, "Cohesion (c') [kPa]", "20.0", "c")
-        self.add_input(f1, "Friction Angle (φ') [°]", "20.0", "phi")
-        self.add_input(f1, "Unit Weight (γ) [kN/m³]", "18.0", "gamma")
+        self.add_input(f1, "Friction Angle (φ') [°]", "10", "phi")
+        self.add_input(f1, "Unit Weight (γ) [kN/m³]", "19.0", "gamma")
         self.add_input(f1, "Pore Pressure Ratio (ru)", "0.0", "ru") # Fellenius only
         g1.setLayout(f1)
         self.field_groups['ru'] = (f1.labelForField(self.inputs['ru']), self.inputs['ru'])
@@ -106,7 +120,7 @@ class SlopeStabilityApp(QMainWindow):
         f2 = QFormLayout()
         self.add_input(f2, "Slope Height (H) [m]", "5.0", "height")
         
-        # Fellenius specific geometry
+        # Fellenius / Bishop / Janbu common geometry
         self.add_input(f2, "Slope Ratio (1V:mH)", "0.363", "ratio") 
         self.add_input(f2, "Toe Extension [m]", "5.0", "toe_ext")
         self.add_input(f2, "Crest Extension [m]", "30.0", "crest_ext")
@@ -123,6 +137,16 @@ class SlopeStabilityApp(QMainWindow):
         self.field_groups['crest_ext'] = (f2.labelForField(self.inputs['crest_ext']), self.inputs['crest_ext'])
         self.field_groups['beta'] = (f2.labelForField(self.inputs['beta']), self.inputs['beta'])
         self.field_groups['D'] = (f2.labelForField(self.inputs['depth_factor']), self.inputs['depth_factor'])
+
+        # Group 2.1: Evaluation only – 滑动面圆心
+        g_center = self.create_group("Slip Surface Center", self.form_layout)
+        f_center = QFormLayout()
+        self.add_input(f_center, "Circle Center X (xc) [m]", "1.58", "center_x")
+        self.add_input(f_center, "Circle Center Y (yc) [m]", "11.05", "center_y")
+        g_center.setLayout(f_center)
+        self.center_group = g_center
+        # 默认在 Main 视图下隐藏，Evaluation 时显示
+        self.center_group.setVisible(False)
 
         # Group 3: Analysis Settings (Fellenius only)
         self.sett_group = self.create_group("Analysis Settings", self.form_layout)
@@ -188,6 +212,37 @@ class SlopeStabilityApp(QMainWindow):
         lbl.setVisible(visible)
         widget.setVisible(visible)
 
+    def on_view_change(self, index):
+        """
+        View mode:
+        0 - Main（单方法分析，默认，与原来行为一致）
+        1 - Evaluation（同时对比 Fellenius/Bishop/Janbu 并做 slices / iterations 实验）
+        """
+        self.reset_figure()
+        if index == 0:
+            self.on_method_change(self.method_combo.currentIndex())
+            self.run_btn.setText("RUN ANALYSIS")
+            if hasattr(self, "center_group"):
+                self.center_group.setVisible(False)
+            if hasattr(self, "method_combo"):
+                self.method_combo.setVisible(True)
+        else:
+            self.result_label.setText("Evaluation | Compare Fellenius, Bishop, Janbu under same input.")
+            self.result_label.setStyleSheet(
+                "background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; "
+                "padding: 10px; border: 1px solid #3e3e50; border-radius: 4px;"
+            )
+            self.run_btn.setText("RUN EVALUATION")
+            if hasattr(self, "center_group"):
+                self.center_group.setVisible(True)
+            # Evaluation 视图下隐藏 Analysis Settings 与 Search Grid
+            if hasattr(self, "sett_group"):
+                self.sett_group.setVisible(False)
+            if hasattr(self, "grid_group"):
+                self.grid_group.setVisible(False)
+            if hasattr(self, "method_combo"):
+                self.method_combo.setVisible(False)
+
     def on_method_change(self, index):
         # index: 0=Fellenius, 1=Bishop, 2=Taylor, 3=Janbu
         is_taylor = (index == 2)
@@ -245,7 +300,8 @@ class SlopeStabilityApp(QMainWindow):
 
     def run_analysis(self):
         method_idx = self.method_combo.currentIndex()
-        # Reset figure to ensure clean state (especially when switching from Taylor to Fellenius)
+        view_idx = self.view_combo.currentIndex() if hasattr(self, "view_combo") else 0
+        # Reset figure to ensure clean state (especially when switching modes)
         self.reset_figure()
 
         try:
@@ -254,14 +310,17 @@ class SlopeStabilityApp(QMainWindow):
             gamma = self.get_float('gamma')
             H = self.get_float('height')
 
-            if method_idx == 0:
-                self.run_fellenius(c, phi, gamma, H)
-            elif method_idx == 1:
-                self.run_bishop(c, phi, gamma, H)
-            elif method_idx == 2:
-                self.run_taylor(c, phi, gamma, H)
+            if view_idx == 0:
+                if method_idx == 0:
+                    self.run_fellenius(c, phi, gamma, H)
+                elif method_idx == 1:
+                    self.run_bishop(c, phi, gamma, H)
+                elif method_idx == 2:
+                    self.run_taylor(c, phi, gamma, H)
+                else:
+                    self.run_janbu(c, phi, gamma, H)
             else:
-                self.run_janbu(c, phi, gamma, H)
+                self.run_evaluation(c, phi, gamma, H)
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -279,7 +338,7 @@ class SlopeStabilityApp(QMainWindow):
         gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
         gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
         
-        best, results = analyzer.find_critical_fos(slices, gx, gy)
+        best, results = analyzer.find_critical_fos(slices, gx, gy, plot=False)
 
         # Plot Heatmap
         if results:
@@ -298,7 +357,7 @@ class SlopeStabilityApp(QMainWindow):
             circ = Circle(best['center'], best['radius'], fill=False, edgecolor='#ff4444', linewidth=2, linestyle='--')
             self.ax.add_patch(circ)
             self.ax.plot(best['center'][0], best['center'][1], 'rx')
-            self.result_label.setText(f"Fellenius Method | Min FoS: {best['fos']:.3f}")
+            self.result_label.setText(f"Fellenius Method | Min FoS: {best['fos']:.3f} | Center: ({best['center'][0]:.2f}, {best['center'][1]:.2f}) | Radius: {best['radius']:.2f}")
         else:
             self.result_label.setText("Fellenius Method | No valid slip surface found.")
         
@@ -316,8 +375,24 @@ class SlopeStabilityApp(QMainWindow):
         
         gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
         gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
+
+        # 默认不再强制“只过坡脚”，而是在整个坡脚平台宽度 [-toe_ext, 0] 上遍历入口点
+        if toe > 0:
+            # 以约 0.5m 步长离散入口点，至少 3 个点
+            step = 0.5
+            n_entry = max(3, int(toe / step) + 1)
+            entry_x_range = np.linspace(-toe, 0.0, n_entry)
+        else:
+            # toe_ext 非正时退回只过坡脚
+            entry_x_range = None
         
-        best, results = analyzer.find_critical_fos(slices, gx, gy, plot=False)
+        best, results = analyzer.find_critical_fos(
+            slices,
+            gx,
+            gy,
+            plot=False,
+            entry_x_range=entry_x_range,
+        )
         
         if results:
             Z = np.array([r[2] for r in results]).reshape(len(gx), len(gy)).T
@@ -334,7 +409,7 @@ class SlopeStabilityApp(QMainWindow):
             circ = Circle(best['center'], best['radius'], fill=False, edgecolor='#ff4444', linewidth=2, linestyle='--')
             self.ax.add_patch(circ)
             self.ax.plot(best['center'][0], best['center'][1], 'rx')
-            self.result_label.setText(f"Bishop Method | Min FoS: {best['fos']:.3f}")
+            self.result_label.setText(f"Bishop Method | Min FoS: {best['fos']:.3f} | Center: ({best['center'][0]:.2f}, {best['center'][1]:.2f}) | Radius: {best['radius']:.2f}")
         else:
             self.result_label.setText("Bishop Method | No valid slip surface found.")
         
@@ -484,7 +559,16 @@ class SlopeStabilityApp(QMainWindow):
         gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
         gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
 
-        # 3. Janbu GPS 圆弧搜索（入口默认取坡脚点，require_exit_at_crest=True）
+        # entrance point
+        if toe > 0:
+            step = 0.5
+            n_entry = max(3, int(toe / step) + 1)
+            entry_x_range = np.linspace(-toe, 0.0, n_entry)
+        else:
+            # bottom_extension 非正时退回只在坡趾入口
+            entry_x_range = None
+
+        # 3. Janbu GPS circular arc search (entrance point on the slope bottom, require_exit_at_crest=True)
         best, results = find_critical_fos_circular_arc(
             ground_profile=ground_profile,
             gamma=gamma,
@@ -494,7 +578,7 @@ class SlopeStabilityApp(QMainWindow):
             n_slices=slices,
             center_grid_x=gx,
             center_grid_y=gy,
-            entry_x_range=None,        # 默认仅从坡脚出发
+            entry_x_range=entry_x_range,
             q=0.0,
             use_gps=True,
             gps_tolerance=1e-6,
@@ -502,7 +586,7 @@ class SlopeStabilityApp(QMainWindow):
             require_exit_at_crest=True,
         )
 
-        # 4. 画 FoS 等高线
+        # 4. draw FoS contour
         if results:
             Z = np.array([r[2] for r in results]).reshape(len(gx), len(gy)).T
             contour = self.ax.contourf(gx, gy, Z, levels=20, cmap="viridis_r", alpha=0.8)
@@ -510,19 +594,214 @@ class SlopeStabilityApp(QMainWindow):
             self.cbar.set_label("FoS", color='white')
             self.cbar.ax.yaxis.set_tick_params(color='white', labelcolor='white')
 
-        # 5. 画几何（仅地表线，填充至 y=0）
+        # 5. draw geometry 
         self.ax.plot(gp[:, 0], gp[:, 1], 'w-', linewidth=3)
         self.ax.fill_between(gp[:, 0], 0.0, gp[:, 1], color='#4a4a5a', alpha=0.5)
 
-        # 6. 画最危险滑动圆弧
+        # 6. draw most dangerous slip surface
         if best:
             circ = Circle(best['center'], best['radius'], fill=False, edgecolor='#ff4444', linewidth=2, linestyle='--')
             self.ax.add_patch(circ)
             self.ax.plot(best['center'][0], best['center'][1], 'rx')
-            self.result_label.setText(f"Janbu GPS Method | Min FoS: {best['fos']:.3f}")
+            self.result_label.setText(f"Janbu GPS Method | Min FoS: {best['fos']:.3f} | Center: ({best['center'][0]:.2f}, {best['center'][1]:.2f}) | Radius: {best['radius']:.2f}")
         else:
             self.result_label.setText("Janbu GPS Method | No valid slip surface found.")
 
+        self.canvas.draw()
+
+    def run_evaluation(self, c, phi, gamma, H):
+        """
+        Evaluation 界面：在相同土性与几何、圆心坐标下，对比 Fellenius / Bishop / Janbu 三种方法，
+        并考察：
+          1) 不同条分数 slices (1–25, max iterations=20) 下三种方法的 FoS 变化；
+          2) 不同迭代次数 iterations (0–50, slices=15 固定) 下 Bishop / Janbu 的 FoS 变化，
+             同时绘制 Fellenius 的对比参考线。
+        """
+        ru = self.get_float('ru')
+        ratio = self.get_float('ratio')
+        toe = self.get_float('toe_ext')
+        crest = self.get_float('crest_ext')
+        base_slices = max(1, int(self.get_float('slices')))
+        xc = self.get_float('center_x')
+        yc = self.get_float('center_y')
+
+        # 公共几何：Fellenius / Bishop 共享 1:1 坐标；Janbu 使用 GeometryBuilder
+        # 1) 基线计算：同一圆心 (xc, yc)、同一 slices、迭代上限 20
+        # Fellenius
+        fell = FelleniusAnalyzer(c, phi, gamma, ru)
+        fell.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+        dummy = np.array([0.0])
+        fell_best, _ = fell.find_critical_fos(base_slices, dummy, dummy, plot=False, center=(xc, yc))
+        fos_fell_base = fell_best["fos"] if fell_best else np.nan
+        R_fell = fell_best["radius"] if fell_best else np.nan
+
+        # Bishop（iterations 固定为 20）
+        bishop_iter_eval = 20
+        bish = BishopAnalyzer(c, phi, gamma, ru, iterations=bishop_iter_eval)
+        bish.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+        bish_best, _ = bish.find_critical_fos(base_slices, dummy, dummy, plot=False, center=(xc, yc))
+        fos_bish_base = bish_best["fos"] if bish_best else np.nan
+        R_bish = bish_best["radius"] if bish_best else np.nan
+
+        # Janbu：使用 GeometryBuilder + 单中心模式的 find_critical_fos_circular_arc（max_iter=20）
+        gb = GeometryBuilder(slope_height=H, slope_ratio=ratio, bottom_extension=toe, top_extension=crest)
+        ground_profile, _region = gb.build()
+        gx_dummy = np.array([0.0])
+        gy_dummy = np.array([0.0])
+        janbu_best, _ = find_critical_fos_circular_arc(
+            ground_profile=ground_profile,
+            gamma=gamma,
+            c_prime=c,
+            phi_prime=phi,
+            ru=ru,
+            n_slices=base_slices,
+            center_grid_x=gx_dummy,
+            center_grid_y=gy_dummy,
+            entry_x_range=None,
+            q=0.0,
+            use_gps=True,
+            gps_tolerance=1e-6,
+            gps_max_iter=20,
+            require_exit_at_crest=True,
+            center=(xc, yc),
+            x_entry_single=None,
+        )
+        fos_janbu_base = janbu_best["fos"] if janbu_best else np.nan
+        R_janbu = janbu_best["radius"] if janbu_best else np.nan
+
+        # 在结果标签中输出类似表格的对比
+        table_text = (
+            "Evaluation | Most Dangerous Circle (single given center)\n"
+            f"  Fellenius: FoS = {fos_fell_base:.3f} | R = {R_fell:.3f}\n"
+            f"  Bishop   : FoS = {fos_bish_base:.3f} | R = {R_bish:.3f}\n"
+            f"  Janbu GPS: FoS = {fos_janbu_base:.3f} | R = {R_janbu:.3f}\n"
+            f"  Center (xc, yc) = ({xc:.3f}, {yc:.3f}),  H = {H:.3f}"
+        )
+        self.result_label.setText(table_text)
+        self.result_label.setStyleSheet(
+            "background-color: rgba(30, 30, 46, 0.9); color: #f0f0f0; font-size: 13px; "
+            "padding: 10px; border: 1px solid #5a9fd4; border-radius: 4px;"
+        )
+
+        # 2) 绘制两组实验图：上 slices 实验，下 iterations 实验
+        self.figure.clear()
+        ax1 = self.figure.add_subplot(211)
+        ax2 = self.figure.add_subplot(212)
+
+        color_fell = "#42a5f5"   
+        color_bish = "#ffb74d"   
+        color_janbu = "#66bb6a"  
+        color_ref = "#bdbdbd"    
+
+        # ---- 实验 1：不同 slices (1–25)，iter 上限统一为 20 ----
+        max_slices = 25
+        slices_list = list(range(1, max_slices + 1))
+        fos_fell_list = []
+        fos_bish_list = []
+        fos_janbu_list = []
+
+        for n in slices_list:
+            # Fellenius
+            fell_best_n, _ = fell.find_critical_fos(n, dummy, dummy, plot=False, center=(xc, yc))
+            fos_fell_list.append(fell_best_n["fos"] if fell_best_n else np.nan)
+
+            # Bishop（同一迭代上限 20）
+            bish_n = BishopAnalyzer(c, phi, gamma, ru, iterations=bishop_iter_eval)
+            bish_n.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+            bish_best_n, _ = bish_n.find_critical_fos(n, dummy, dummy, plot=False, center=(xc, yc))
+            fos_bish_list.append(bish_best_n["fos"] if bish_best_n else np.nan)
+
+            # Janbu
+            janbu_best_n, _ = find_critical_fos_circular_arc(
+                ground_profile=ground_profile,
+                gamma=gamma,
+                c_prime=c,
+                phi_prime=phi,
+                ru=ru,
+                n_slices=n,
+                center_grid_x=gx_dummy,
+                center_grid_y=gy_dummy,
+                entry_x_range=None,
+                q=0.0,
+                use_gps=True,
+                gps_tolerance=1e-6,
+                gps_max_iter=20,
+                require_exit_at_crest=True,
+                center=(xc, yc),
+                x_entry_single=None,
+            )
+            fos_janbu_list.append(janbu_best_n["fos"] if janbu_best_n else np.nan)
+
+        ax1.plot(slices_list, fos_fell_list, marker="o", color=color_fell, linewidth=2.0, label="Fellenius")
+        ax1.plot(slices_list, fos_bish_list, marker="s", color=color_bish, linewidth=2.0, label="Bishop")
+        ax1.plot(slices_list, fos_janbu_list, marker="^", color=color_janbu, linewidth=2.0, label="Janbu GPS")
+        ax1.set_xlabel("Number of slices n")
+        ax1.set_ylabel("FoS")
+        ax1.set_title("Experiment 1: FoS vs slices (max iterations = 20)")
+        ax1.grid(True, color="#444444", linestyle=":", alpha=0.7)
+        ax1.legend()
+
+        # ---- 实验 2：不同迭代次数 (0–50)，slices 固定 15 ----
+        fixed_slices = 15
+        iter_max = 50
+        iter_list = list(range(0, iter_max + 1))
+        fos_fell_iter = []
+        fos_bish_iter = []
+        fos_janbu_iter = []
+
+        # Fellenius 在该实验中不随迭代变化，只作为水平参考线
+        fell_fixed_best, _ = fell.find_critical_fos(fixed_slices, dummy, dummy, plot=False, center=(xc, yc))
+        fos_fell_fixed = fell_fixed_best["fos"] if fell_fixed_best else np.nan
+
+        for it in iter_list:
+            fos_fell_iter.append(fos_fell_fixed)
+
+            # Bishop：iterations 直接等于 it
+            bish_it = BishopAnalyzer(c, phi, gamma, ru, iterations=it)
+            bish_it.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+            bish_best_it, _ = bish_it.find_critical_fos(fixed_slices, dummy, dummy, plot=False, center=(xc, yc))
+            fos_bish_iter.append(bish_best_it["fos"] if bish_best_it else np.nan)
+
+            # Janbu：gps_max_iter = it
+            janbu_best_it, _ = find_critical_fos_circular_arc(
+                ground_profile=ground_profile,
+                gamma=gamma,
+                c_prime=c,
+                phi_prime=phi,
+                ru=ru,
+                n_slices=fixed_slices,
+                center_grid_x=gx_dummy,
+                center_grid_y=gy_dummy,
+                entry_x_range=None,
+                q=0.0,
+                use_gps=True,
+                gps_tolerance=1e-6,
+                gps_max_iter=max(1, it),  # 至少做一次 GPS 步，it=0 时近似为一次更新
+                require_exit_at_crest=True,
+                center=(xc, yc),
+                x_entry_single=None,
+            )
+            fos_janbu_iter.append(janbu_best_it["fos"] if janbu_best_it else np.nan)
+
+        ax2.plot(iter_list, fos_fell_iter, linestyle="--", color=color_ref, linewidth=1.8, label="Fellenius (reference)")
+        ax2.plot(iter_list, fos_bish_iter, marker="s", markevery=5, color=color_bish, linewidth=2.0, label="Bishop")
+        ax2.plot(iter_list, fos_janbu_iter, marker="^", markevery=5, color=color_janbu, linewidth=2.0, label="Janbu GPS")
+        ax2.set_xlabel("Number of iterations")
+        ax2.set_ylabel("FoS")
+        ax2.set_title(f"Experiment 2: FoS vs iterations (slices = {fixed_slices})")
+        ax2.grid(True, color="#444444", linestyle=":", alpha=0.7)
+        ax2.legend()
+
+        for ax in (ax1, ax2):
+            ax.set_facecolor("#0f172a")  # 略浅的深蓝背景，提高对比度
+            ax.tick_params(colors="white")
+            ax.xaxis.label.set_color("white")
+            ax.yaxis.label.set_color("white")
+            ax.title.set_color("white")
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#777777")
+
+        self.figure.tight_layout()
         self.canvas.draw()
 
 if __name__ == "__main__":

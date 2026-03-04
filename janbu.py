@@ -43,17 +43,18 @@ class GeometryBuilder:
         Returns
         -------
         ground_profile : list[tuple[float, float]]
-            A-B-C-D 四个顶点的坐标:
-              A = (0, 0)
-              B = (L_bot, 0)
-              C = (L_bot + H * m, H)
-              D = (L_bot + H * m + L_top, H)
+            A-B-C-D 四个顶点的坐标（统一与 Fellenius/Bishop 一致，以坡脚为原点）:
+              A = (-L_bot, 0)             # 坡脚前平台左端
+              B = (0, 0)                  # 坡脚 toe
+              C = (H * m, H)              # 坡顶拐点（坡肩）
+              D = (H * m + L_top, H)      # 坡顶后平台右端
         slope_region : np.ndarray
             形如 [[x0,y0], [x1,y1], ...] 的多边形顶点数组。
         """
-        A = (0.0, 0.0)
-        B = (self.L_bot, 0.0)
-        C_x = self.L_bot + self.H * self.m
+        # 坡脚 toe 设为原点 (0, 0)，与 Fellenius/Bishop 统一坐标系
+        A = (-self.L_bot, 0.0)          # 坡脚前平台左端
+        B = (0.0, 0.0)                  # 坡脚 toe
+        C_x = self.H * self.m          # 坡肩 x 坐标
         C = (C_x, self.H)
         D_x = C_x + self.L_top
         D = (D_x, self.H)
@@ -248,7 +249,7 @@ class JanbuPreprocessor:
 
         gp = np.asarray(ground_profile, dtype=float)
         xs_surface, ys_surface = gp[:, 0], gp[:, 1]
-        # Janbu GeometryBuilder: A=(0,0), B=(L_bot,0), C=(crest_x,H)
+        # Janbu GeometryBuilder: A=(-L_bot,0), B=(0,0), C=(crest_x,H)（与 Fellenius/Bishop 一致，以坡脚 toe 为原点）
         A = gp[0]
         B = gp[1]
         C = gp[2] if gp.shape[0] >= 3 else gp[-1]
@@ -530,6 +531,8 @@ def find_critical_fos_circular_arc(
     gps_max_iter=80,
     lambda_thrust=0.33,
     require_exit_at_crest=True,
+    center=None,
+    x_entry_single=None,
 ):
     """
     像 bishop.py 一样：在约束条件下搜索 valid 的圆弧滑动面，并返回最小 FoS。
@@ -537,7 +540,10 @@ def find_critical_fos_circular_arc(
     与单弧计算 calculate_fos_for_circular_arc 使用同一套几何与求解路径（圆弧条分 + GPS 圆弧模式），
     避免搜索结果与“按最危险 slip 单算”不一致（如出现异常负 FoS）。
 
-    搜索变量：
+    若提供 `center`（以及可选 `x_entry_single`），则只对该圆心（和入口点）进行单次 FoS 计算，
+    不再遍历 center_grid_x / center_grid_y 网格，可用于直接检验某个给定圆心的稳定性。
+
+    搜索变量（未指定 center 时）：
     - 圆心 (xc, yc) ∈ center_grid_x × center_grid_y
     - 坡底入口 x_entry ∈ entry_x_range（要求位于坡底宽度 [A.x, B.x] 内）
 
@@ -562,6 +568,68 @@ def find_critical_fos_circular_arc(
 
     pre = JanbuPreprocessor(gamma=gamma)
     solver = JanbuSolver(c_prime=c_prime, phi_prime=phi_prime, ru=ru, u_i=None, delta_Q_i=0.0)
+
+    # 若显式给定单一圆心，则走“单中心”路径：不遍历 center_grid_x / center_grid_y
+    if center is not None:
+        xc, yc = map(float, center)
+
+        # 入口点：优先使用 x_entry_single；否则默认取坡脚点（x_max_bot）
+        if x_entry_single is None:
+            x_entry_use = x_max_bot
+        else:
+            x_entry_use = float(x_entry_single)
+
+        if x_entry_use < x_min_bot or x_entry_use > x_max_bot:
+            return None, [(xc, yc, np.nan)]
+
+        slices, meta = pre.slice_along_circular_arc(
+            ground_profile=ground_profile,
+            center=(xc, yc),
+            x_entry=x_entry_use,
+            n_slices=n_slices,
+            q=q,
+            require_exit_at_crest=require_exit_at_crest,
+        )
+        if slices is None:
+            return None, [(xc, yc, np.nan)]
+
+        radius = float(meta["radius"])
+        F0, conv0, it0 = solver.calculate_fos_initial(
+            slices, F_init=1.0, tolerance=gps_tolerance, max_iter=50
+        )
+        if not np.isfinite(F0):
+            return None, [(xc, yc, np.nan)]
+
+        if use_gps:
+            F, converged, iterations, _ = solver.calculate_fos_gps(
+                slices=slices,
+                slip_profile=None,
+                ground_profile=ground_profile,
+                F_init=F0,
+                tolerance=gps_tolerance,
+                max_iter=gps_max_iter,
+                lambda_thrust=lambda_thrust,
+                print_iteration_table=False,
+                arc_center=(xc, yc),
+                arc_radius=radius,
+            )
+            fos_val = float(F)
+        else:
+            fos_val = float(F0)
+
+        if not (np.isfinite(fos_val) and fos_val > 0):
+            best_single = None
+        else:
+            best_single = {
+                "center": (xc, yc),
+                "radius": radius,
+                "x_entry": x_entry_use,
+                "fos": fos_val,
+                "use_gps": bool(use_gps),
+            }
+
+        fos_results_single = [(xc, yc, fos_val if np.isfinite(fos_val) else np.nan)]
+        return best_single, fos_results_single
 
     min_fos = np.inf
     best = None
