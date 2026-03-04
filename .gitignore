@@ -8,6 +8,10 @@
 /dataSources.local.xml
 
 # cache
+<<<<<<< HEAD:.idea/.gitignore
 __pycache__/
 *.pyc
+=======
+_pycache_/
+>>>>>>> rescue:.gitignore
 .idea/

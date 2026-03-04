@@ -164,13 +164,36 @@ class FelleniusAnalyzer:
 
         return slices_data
 
-    def find_critical_fos(self, n_slices, center_grid_x, center_grid_y, plot=True):
+    def find_critical_fos(self, n_slices, center_grid_x, center_grid_y, plot=True, center=None):
         """
         Parameters:
         n_slices (int): Number of slices for each arc
         center_grid_x (np.array): Range of x-coordinates for the trial circle centers
         center_grid_y (np.array): Range of y-coordinates for the trial circle centers
         """
+        # 若显式给定圆心，则只计算该圆心对应的滑动面 FoS，不进行网格搜索
+        if center is not None:
+            xc, yc = map(float, center)
+            radius = float(np.sqrt(xc ** 2 + yc ** 2))
+            slice_data = self._slice_mass((xc, yc), radius, n_slices)
+            if not slice_data:
+                best_circle = None
+                fos_val = np.nan
+            else:
+                fos_val = float(self._calculate_fos(slice_data))
+                best_circle = {"center": (xc, yc), "radius": radius, "fos": fos_val}
+
+            # fos_results 仅包含一个点，便于与 GUI 等调用保持统一接口
+            fos_results = [(xc, yc, fos_val)]
+
+            print(f"\n--- Fellenius single-center evaluation ---")
+            print(f"Center O(x,y) = ({xc:.3f}, {yc:.3f}), R = {radius:.3f}, FoS = {fos_val:.6f}")
+
+            if plot and best_circle is not None:
+                self.plot_result(best_circle, fos_results, np.array([xc]), np.array([yc]))
+
+            return best_circle, fos_results
+
         print(f"\n--- Starting search (Fellenius)... ---")
         print(
             f"Search grid: {len(center_grid_x)} (x) * {len(center_grid_y)} (y) = {len(center_grid_x) * len(center_grid_y)} circle centers")
