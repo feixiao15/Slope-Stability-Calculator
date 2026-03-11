@@ -693,8 +693,8 @@ class SlopeStabilityApp(QMainWindow):
         color_janbu = "#66bb6a"  
         color_ref = "#bdbdbd"    
 
-        # ---- 实验 1：不同 slices (1–25)，iter 上限统一为 20 ----
-        max_slices = 25
+        # ---- 实验 1：不同 slices  ----
+        max_slices = 20
         slices_list = list(range(1, max_slices + 1))
         fos_fell_list = []
         fos_bish_list = []
