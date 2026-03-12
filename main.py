@@ -366,11 +366,14 @@ class SlopeStabilityApp(QMainWindow):
                 pass  # Colorbar may already be removed
             self.cbar = None
         self.figure.clear()
+        # Evaluation 会改成白底，这里统一恢复主界面深色底
+        self.figure.patch.set_facecolor('#1e1e2e')
         self.ax = self.figure.add_subplot(111)
         self.setup_plot_style()
 
     def setup_plot_style(self):
         self.ax.clear()
+        self.figure.patch.set_facecolor('#1e1e2e')
         self.ax.set_facecolor('#1e1e2e')
         self.ax.tick_params(colors='white')
         self.ax.xaxis.label.set_color('white')
