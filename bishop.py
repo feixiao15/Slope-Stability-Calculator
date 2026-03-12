@@ -45,31 +45,103 @@ class BishopAnalyzer:
         fp = self.surface_poly[:, 1]
         return np.interp(x, xp, fp)
 
-    def _calculate_fos(self, slice_data):
+    def _calculate_fos(self, slice_data, return_details=False):
         """
         Parameters:
         slice_data (list of dicts): Soil slice data calculated by _slice_mass
         """
-        fos = 1
-        for i in range(self.iterations):
+        fos = 1.0
+        detail_payload = {
+            "formula": "FoS = Σ{[c'b + (W(1-ru))tanφ'] * mα(F)} / Σ(W sinα), mα(F)=secα/(1+tanφ·tanα/F)",
+            "iterations": [],
+            "converged": False,
+        }
+        max_iter = max(1, int(self.iterations))
+        for i in range(max_iter):
             numerator = 0.0  
             denominator = 0.0  
-            for s in slice_data:
+            slice_terms = []
+            for idx, s in enumerate(slice_data, start=1):
                 W_i = s['W']
                 alpha_rad = s['alpha_rad']
                 b_i = s['b']
 
-                denominator += W_i * np.sin(alpha_rad)
+                sliding_i = W_i * np.sin(alpha_rad)
+                denominator += sliding_i
 
-                numerator += (self.c_prime * b_i + self.tan_phi * (W_i * (1 - self.r_u))) * ((1/np.cos(alpha_rad))/(1+self.tan_phi * np.tan(alpha_rad)/fos))
+                sec_alpha = 1 / np.cos(alpha_rad)
+                m_alpha = sec_alpha / (1 + self.tan_phi * np.tan(alpha_rad) / fos)
+                resisting_i = (self.c_prime * b_i + self.tan_phi * (W_i * (1 - self.r_u))) * m_alpha
+                numerator += resisting_i
+
+                if return_details:
+                    slice_terms.append({
+                        "slice": idx,
+                        "W": float(W_i),
+                        "alpha_rad": float(alpha_rad),
+                        "alpha_deg": float(np.degrees(alpha_rad)),
+                        "b": float(b_i),
+                        "sec_alpha": float(sec_alpha),
+                        "m_alpha": float(m_alpha),
+                        "resisting": float(resisting_i),
+                        "sliding": float(sliding_i),
+                    })
 
             if denominator <= 0:
+                if return_details:
+                    detail_payload["iterations"].append({
+                        "iteration": i + 1,
+                        "fos_old": float(fos),
+                        "fos_new": float("inf"),
+                        "delta": float("inf"),
+                        "numerator": float(numerator),
+                        "denominator": float(denominator),
+                        "slice_terms": slice_terms,
+                    })
+                    detail_payload["fos_final"] = float("inf")
+                    return np.inf, detail_payload
                 return np.inf
             fos_new = numerator / denominator
+            if return_details:
+                detail_payload["iterations"].append({
+                    "iteration": i + 1,
+                    "fos_old": float(fos),
+                    "fos_new": float(fos_new),
+                    "delta": float(abs(fos_new - fos)),
+                    "numerator": float(numerator),
+                    "denominator": float(denominator),
+                    "slice_terms": slice_terms,
+                })
             if abs(fos_new - fos) < 0.0001:
+                fos = float(fos_new)
+                detail_payload["converged"] = True
                 break
             fos = fos_new
-        return fos
+        if return_details:
+            detail_payload["fos_final"] = float(fos)
+            return float(fos), detail_payload
+        return float(fos)
+
+    def calculate_circle_details(self, center, n_slices, x_entry=0.0):
+        """
+        计算指定圆心+入口点对应滑动面的明细，供 GUI 展示 Calculation Details。
+        """
+        xc, yc = map(float, center)
+        x_entry = float(x_entry)
+        y_entry = self._get_y_on_surface(x_entry)
+        radius = float(np.sqrt((xc - x_entry) ** 2 + (yc - y_entry) ** 2))
+        slice_data = self._slice_mass((xc, yc), radius, n_slices, x_entry=x_entry)
+        if not slice_data:
+            return None
+        fos, detail = self._calculate_fos(slice_data, return_details=True)
+        return {
+            "center": (xc, yc),
+            "radius": radius,
+            "x_entry": x_entry,
+            "fos": float(fos),
+            "n_slices": len(slice_data),
+            "detail": detail,
+        }
 
     def _slice_mass(self, center, radius, n_slices, x_entry=0.0):
         """

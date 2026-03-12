@@ -721,6 +721,7 @@ def calculate_fos_for_circular_arc(
     lambda_thrust=0.33,
     print_iteration_table=False,
     plot_f_history=False,
+    return_debug=False,
 ):
     """
     计算“给定特定圆弧滑动面”的 FoS（不离散成折线）。
@@ -769,7 +770,7 @@ def calculate_fos_for_circular_arc(
         max_iter=gps_max_iter,
         lambda_thrust=lambda_thrust,
         t_init=None,
-        return_debug=True,
+        return_debug=bool(return_debug),
         print_iteration_table=print_iteration_table,
         arc_center=center,
         arc_radius=meta.get("radius"),
@@ -793,13 +794,16 @@ def calculate_fos_for_circular_arc(
 
     # F0 信息由 GPS 调试数据给出
     F0_from_gps = debug.get("F0", np.nan) if debug is not None else np.nan
-    return float(F), slices, {
+    result_meta = {
         **meta,
         "F0": float(F0_from_gps),
         "use_gps": True,
         "converged": bool(converged),
         "iterations": int(iterations),
     }
+    if return_debug:
+        result_meta["debug"] = debug
+    return float(F), slices, result_meta
 
 
 def build_slip_profile_polyline_from_factors(

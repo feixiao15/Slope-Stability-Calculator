@@ -4,7 +4,7 @@ import numpy as np
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QComboBox, QFormLayout, QGroupBox, QFrame, 
-                             QScrollArea, QMessageBox, QStackedWidget)
+                             QScrollArea, QMessageBox, QStackedWidget, QDialog, QTextEdit)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QPalette
 import matplotlib
@@ -17,7 +17,7 @@ matplotlib.use('QtAgg')
 from bishop import BishopAnalyzer
 from fellenius import FelleniusAnalyzer
 from taylor import TaylorSolver
-from janbu import GeometryBuilder, find_critical_fos_circular_arc
+from janbu import GeometryBuilder, find_critical_fos_circular_arc, calculate_fos_for_circular_arc
 
 # Fellenius / Taylor 的具体实现已移动到独立模块 `fellenius.py` / `taylor.py`，
 # 这里不再重复定义，仅在后续 GUI 逻辑中直接实例化并调用这些 solver。
@@ -184,7 +184,19 @@ class SlopeStabilityApp(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         self.result_label = QLabel("Select parameters and run analysis.")
         self.result_label.setStyleSheet("background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; padding: 10px; border: 1px solid #3e3e50; border-radius: 4px;")
-        right_layout.addWidget(self.result_label)
+        top_bar = QHBoxLayout()
+        top_bar.addWidget(self.result_label, 1)
+        self.details_btn = QPushButton("Calculation Details")
+        self.details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.details_btn.setFixedHeight(32)
+        self.details_btn.setStyleSheet("""
+            QPushButton { background-color: #2b2b3b; color: #e0e0e0; border: 1px solid #3e3e50; border-radius: 4px; padding: 6px 10px; }
+            QPushButton:hover { border: 1px solid #5a9fd4; color: white; }
+            QPushButton:disabled { color: #777; border: 1px solid #2a2a35; background-color: #1e1e24; }
+        """)
+        self.details_btn.clicked.connect(self.show_calculation_details)
+        top_bar.addWidget(self.details_btn, 0, Qt.AlignmentFlag.AlignRight)
+        right_layout.addLayout(top_bar)
         
         self.figure = Figure(figsize=(10, 8), facecolor='#1e1e2e')
         self.canvas = FigureCanvas(self.figure)
@@ -193,6 +205,8 @@ class SlopeStabilityApp(QMainWindow):
         
         self.ax = self.figure.add_subplot(111)
         self.setup_plot_style()
+        self.last_calc_details = None
+        self.last_calc_method = ""
         
         # Initialize visibility
         self.on_method_change(0)
@@ -227,6 +241,7 @@ class SlopeStabilityApp(QMainWindow):
             if hasattr(self, "method_combo"):
                 self.method_combo.setVisible(True)
         else:
+            self.clear_calculation_details()
             self.result_label.setText("Evaluation | Compare Fellenius, Bishop, Janbu under same input.")
             self.result_label.setStyleSheet(
                 "background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; "
@@ -242,6 +257,7 @@ class SlopeStabilityApp(QMainWindow):
                 self.grid_group.setVisible(False)
             if hasattr(self, "method_combo"):
                 self.method_combo.setVisible(False)
+        self.update_details_button_visibility()
 
     def on_method_change(self, index):
         # index: 0=Fellenius, 1=Bishop, 2=Taylor, 3=Janbu
@@ -269,6 +285,8 @@ class SlopeStabilityApp(QMainWindow):
         method_name = method_names[index]
         self.result_label.setText(f"{method_name} | Select parameters and run analysis.")
         self.result_label.setStyleSheet("background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; padding: 10px; border: 1px solid #3e3e50; border-radius: 4px;")
+        self.clear_calculation_details()
+        self.update_details_button_visibility()
 
     def reset_figure(self):
         """Reset figure to single subplot state"""
@@ -298,11 +316,148 @@ class SlopeStabilityApp(QMainWindow):
         try: return float(self.inputs[key].text())
         except: return 0.0
 
+    def update_details_button_visibility(self):
+        if not hasattr(self, "details_btn"):
+            return
+        view_idx = self.view_combo.currentIndex() if hasattr(self, "view_combo") else 0
+        method_idx = self.method_combo.currentIndex() if hasattr(self, "method_combo") else 0
+        supported = (view_idx == 0) and (method_idx in (0, 1, 3))
+        self.details_btn.setVisible(supported)
+        self.details_btn.setEnabled(supported and self.last_calc_details is not None)
+
+    def clear_calculation_details(self):
+        self.last_calc_details = None
+        self.last_calc_method = ""
+        self.update_details_button_visibility()
+
+    def set_calculation_details(self, method_name, text):
+        self.last_calc_method = str(method_name)
+        self.last_calc_details = str(text)
+        self.update_details_button_visibility()
+
+    def show_calculation_details(self):
+        if not self.last_calc_details:
+            QMessageBox.information(self, "Calculation Details", "No calculation details available. Please run analysis first.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Calculation Details - {self.last_calc_method}")
+        dlg.resize(980, 720)
+        lay = QVBoxLayout(dlg)
+        txt = QTextEdit()
+        txt.setReadOnly(True)
+        txt.setStyleSheet("background-color: #151522; color: #e8e8e8; border: 1px solid #3e3e50; font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
+        txt.setPlainText(self.last_calc_details)
+        lay.addWidget(txt)
+        dlg.exec()
+
+    def _format_fellenius_details(self, detail):
+        lines = []
+        lines.append("Method: Fellenius")
+        lines.append("Key Formula:")
+        lines.append("  FoS = Σ[c'l + N'tanφ'] / Σ[Wsinα],  N' = Wcosα - ul,  ul = ru*W/cosα")
+        lines.append("")
+        lines.append(f"Critical Circle: center=({detail['center'][0]:.4f}, {detail['center'][1]:.4f}), R={detail['radius']:.4f}")
+        lines.append(f"FoS(min) = {detail['fos']:.6f}, Effective slices = {detail['n_slices']}")
+        d = detail["detail"]
+        lines.append(f"ΣResisting = {d['numerator']:.6f}, ΣSliding = {d['denominator']:.6f}")
+        lines.append("")
+        lines.append("Per-slice terms:")
+        lines.append("  i | x_mid | h_mid | W | α(deg) | l | ul | N' | Cohesion | Friction | Resisting | Sliding")
+        for s in d["slice_terms"]:
+            lines.append(
+                f"  {s['slice']:>2d} | {s['x_mid']:.4f} | {s['h_mid']:.4f} | {s['W']:.4f} | "
+                f"{s['alpha_deg']:.4f} | {s['l']:.4f} | {s['u_l']:.4f} | {s['N_prime']:.4f} | "
+                f"{s['cohesion_resistance']:.4f} | {s['friction_resistance']:.4f} | {s['resisting']:.4f} | {s['sliding']:.4f}"
+            )
+        return "\n".join(lines)
+
+    def _format_bishop_details(self, detail):
+        d = detail["detail"]
+        lines = []
+        lines.append("Method: Bishop")
+        lines.append("Key Formula:")
+        lines.append("  FoS = Σ{[c'b + (W(1-ru))tanφ'] * mα(F)} / Σ(Wsinα)")
+        lines.append("  mα(F) = secα / [1 + tanφ*tanα/F]")
+        lines.append("")
+        lines.append(
+            f"Critical Circle: center=({detail['center'][0]:.4f}, {detail['center'][1]:.4f}), "
+            f"R={detail['radius']:.4f}, x_entry={detail['x_entry']:.4f}"
+        )
+        lines.append(
+            f"FoS(min) = {detail['fos']:.6f}, Effective slices = {detail['n_slices']}, "
+            f"Converged = {d.get('converged', False)}"
+        )
+        lines.append("")
+        for it in d["iterations"]:
+            lines.append(
+                f"Iteration {it['iteration']:>2d}: F_old={it['fos_old']:.6f}, F_new={it['fos_new']:.6f}, "
+                f"ΔF={it['delta']:.6e}, ΣResisting={it['numerator']:.6f}, ΣSliding={it['denominator']:.6f}"
+            )
+            lines.append("  i | W | α(deg) | b | mα | Resisting_i | Sliding_i")
+            for s in it["slice_terms"]:
+                lines.append(
+                    f"  {s['slice']:>2d} | {s['W']:.4f} | {s['alpha_deg']:.4f} | {s['b']:.4f} | "
+                    f"{s['m_alpha']:.6f} | {s['resisting']:.6f} | {s['sliding']:.6f}"
+                )
+            lines.append("")
+        return "\n".join(lines)
+
+    def _format_janbu_details(self, best, slices, meta):
+        lines = []
+        lines.append("Method: Janbu GPS")
+        lines.append("Key Formula (iteration core):")
+        lines.append("  F = Σ(A_i / nα_i) / Σ(B_i)")
+        lines.append("  nα_i = cos²α_i * [1 + tanα_i*tanφ'_i/F]")
+        lines.append("  A_i = [c'_i + (p_i + t_i - u_i)tanφ'_i]Δx_i,  B_i = ΔQ_i + (p_i + t_i)Δx_i tanα_i")
+        lines.append("")
+        lines.append(
+            f"Critical Circle: center=({best['center'][0]:.4f}, {best['center'][1]:.4f}), "
+            f"R={best['radius']:.4f}, x_entry={best.get('x_entry', 0.0):.4f}"
+        )
+        lines.append(
+            f"FoS(min) = {best['fos']:.6f}, F0 = {meta.get('F0', np.nan):.6f}, "
+            f"Converged = {meta.get('converged', False)}, Iterations = {meta.get('iterations', 0)}"
+        )
+        lines.append("")
+        lines.append("Slice base data:")
+        lines.append("  i | x_mid | width | α(deg) | y_top | y_base | h_mid | W | p")
+        for i, s in enumerate(slices, start=1):
+            lines.append(
+                f"  {i:>2d} | {s['x_mid']:.4f} | {s['width']:.4f} | {s['alpha_deg']:.4f} | "
+                f"{s['y_top']:.4f} | {s['y_base']:.4f} | {s['h_mid']:.4f} | {s['W']:.4f} | {s['p']:.4f}"
+            )
+        debug = meta.get("debug", None)
+        if isinstance(debug, dict):
+            F_hist = debug.get("F", [])
+            t_hist = debug.get("t", [])
+            E_hist = debug.get("E_interface", [])
+            T_hist = debug.get("T_interface", [])
+            lines.append("")
+            lines.append("Iteration history:")
+            if len(F_hist) == 0:
+                lines.append("  (No GPS iteration detail returned)")
+            prev = float(meta.get("F0", np.nan))
+            for k, f_now in enumerate(F_hist, start=1):
+                df = f_now - prev if np.isfinite(prev) else np.nan
+                t_arr = np.asarray(t_hist[k - 1]) if k - 1 < len(t_hist) else np.array([])
+                e_arr = np.asarray(E_hist[k - 1]) if k - 1 < len(E_hist) else np.array([])
+                T_arr = np.asarray(T_hist[k - 1]) if k - 1 < len(T_hist) else np.array([])
+                t_max = float(np.max(np.abs(t_arr))) if t_arr.size else np.nan
+                e_end = float(e_arr[-1]) if e_arr.size else np.nan
+                T_max = float(np.max(np.abs(T_arr))) if T_arr.size else np.nan
+                lines.append(
+                    f"  Iter {k:>2d}: F={float(f_now):.6f}, ΔF={float(df):.6e}, "
+                    f"max|t|={t_max:.6f}, E_end={e_end:.6f}, max|T|={T_max:.6f}"
+                )
+                prev = float(f_now)
+        return "\n".join(lines)
+
     def run_analysis(self):
         method_idx = self.method_combo.currentIndex()
         view_idx = self.view_combo.currentIndex() if hasattr(self, "view_combo") else 0
         # Reset figure to ensure clean state (especially when switching modes)
         self.reset_figure()
+        self.clear_calculation_details()
 
         try:
             c = self.get_float('c')
@@ -358,6 +513,9 @@ class SlopeStabilityApp(QMainWindow):
             self.ax.add_patch(circ)
             self.ax.plot(best['center'][0], best['center'][1], 'rx')
             self.result_label.setText(f"Fellenius Method | Min FoS: {best['fos']:.3f} | Center: ({best['center'][0]:.2f}, {best['center'][1]:.2f}) | Radius: {best['radius']:.2f}")
+            detail = analyzer.calculate_circle_details(best['center'], slices)
+            if detail is not None:
+                self.set_calculation_details("Fellenius Method", self._format_fellenius_details(detail))
         else:
             self.result_label.setText("Fellenius Method | No valid slip surface found.")
         
@@ -410,6 +568,10 @@ class SlopeStabilityApp(QMainWindow):
             self.ax.add_patch(circ)
             self.ax.plot(best['center'][0], best['center'][1], 'rx')
             self.result_label.setText(f"Bishop Method | Min FoS: {best['fos']:.3f} | Center: ({best['center'][0]:.2f}, {best['center'][1]:.2f}) | Radius: {best['radius']:.2f}")
+            x_entry_best = best.get("x_entry", 0.0)
+            detail = analyzer.calculate_circle_details(best['center'], slices, x_entry=x_entry_best)
+            if detail is not None:
+                self.set_calculation_details("Bishop Method", self._format_bishop_details(detail))
         else:
             self.result_label.setText("Bishop Method | No valid slip surface found.")
         
@@ -532,6 +694,7 @@ class SlopeStabilityApp(QMainWindow):
              self.result_label.setStyleSheet("color: #5a9fd4; background-color: rgba(30, 30, 46, 0.9); padding: 10px; border: 1px solid #5a9fd4; border-radius: 4px;")
         else:
              self.result_label.setStyleSheet("color: #2ecc71; background-color: rgba(30, 30, 46, 0.9); font-weight: bold; padding: 10px; border: 1px solid #2ecc71; border-radius: 4px;")
+        self.clear_calculation_details()
 
     def run_janbu(self, c, phi, gamma, H):
         """
@@ -604,6 +767,28 @@ class SlopeStabilityApp(QMainWindow):
             self.ax.add_patch(circ)
             self.ax.plot(best['center'][0], best['center'][1], 'rx')
             self.result_label.setText(f"Janbu GPS Method | Min FoS: {best['fos']:.3f} | Center: ({best['center'][0]:.2f}, {best['center'][1]:.2f}) | Radius: {best['radius']:.2f}")
+            fos_det, slices_det, meta_det = calculate_fos_for_circular_arc(
+                ground_profile=ground_profile,
+                gamma=gamma,
+                c_prime=c,
+                phi_prime=phi,
+                ru=ru,
+                n_slices=slices,
+                center=best["center"],
+                x_entry=best.get("x_entry", 0.0),
+                q=0.0,
+                require_exit_at_crest=True,
+                use_gps=True,
+                gps_tolerance=1e-6,
+                gps_max_iter=80,
+                print_iteration_table=False,
+                return_debug=True,
+            )
+            if np.isfinite(fos_det) and slices_det is not None:
+                self.set_calculation_details(
+                    "Janbu GPS Method",
+                    self._format_janbu_details(best, slices_det, meta_det),
+                )
         else:
             self.result_label.setText("Janbu GPS Method | No valid slip surface found.")
 
@@ -803,6 +988,7 @@ class SlopeStabilityApp(QMainWindow):
 
         self.figure.tight_layout()
         self.canvas.draw()
+        self.clear_calculation_details()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

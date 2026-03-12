@@ -59,7 +59,7 @@ class FelleniusAnalyzer:
         fp = self.surface_poly[:, 1]
         return np.interp(x, xp, fp)
 
-    def _calculate_fos(self, slice_data):
+    def _calculate_fos(self, slice_data, return_details=False):
         """
         Parameters:
         slice_data (list of dicts): Soil slice data calculated by _slice_mass
@@ -67,13 +67,15 @@ class FelleniusAnalyzer:
         numerator = 0.0  # Total resisting force
         denominator = 0.0  # Total sliding force
 
-        for s in slice_data:
+        slice_terms = []
+        for idx, s in enumerate(slice_data, start=1):
             W_i = s['W']
             alpha_rad = s['alpha_rad']
             l_i = s['l']
 
             # 1. Sliding force (denominator)
-            denominator += W_i * np.sin(alpha_rad)
+            sliding_i = W_i * np.sin(alpha_rad)
+            denominator += sliding_i
 
             # 2. Resisting force (numerator)
             cohesion_resistance = self.c_prime * l_i
@@ -88,12 +90,63 @@ class FelleniusAnalyzer:
 
             friction_resistance = N_prime_i * self.tan_phi
 
-            numerator += cohesion_resistance + friction_resistance
+            resisting_i = cohesion_resistance + friction_resistance
+            numerator += resisting_i
+
+            if return_details:
+                slice_terms.append({
+                    "slice": idx,
+                    "W": float(W_i),
+                    "alpha_rad": float(alpha_rad),
+                    "alpha_deg": float(np.degrees(alpha_rad)),
+                    "l": float(l_i),
+                    "u_l": float(ul_i),
+                    "N_prime": float(N_prime_i),
+                    "cohesion_resistance": float(cohesion_resistance),
+                    "friction_resistance": float(friction_resistance),
+                    "resisting": float(resisting_i),
+                    "sliding": float(sliding_i),
+                    "x_mid": float(s.get("x_mid", np.nan)),
+                    "h_mid": float(s.get("h_mid", np.nan)),
+                })
 
         if denominator <= 0:
+            if return_details:
+                return np.inf, {
+                    "numerator": float(numerator),
+                    "denominator": float(denominator),
+                    "slice_terms": slice_terms,
+                    "formula": "FoS = Σ[c'l + N' tanφ'] / Σ[W sinα], N' = W cosα - u l",
+                }
             return np.inf
 
-        return numerator / denominator
+        fos = numerator / denominator
+        if return_details:
+            return fos, {
+                "numerator": float(numerator),
+                "denominator": float(denominator),
+                "slice_terms": slice_terms,
+                "formula": "FoS = Σ[c'l + N' tanφ'] / Σ[W sinα], N' = W cosα - u l",
+            }
+        return fos
+
+    def calculate_circle_details(self, center, n_slices):
+        """
+        计算指定圆心（过坡脚）对应滑动面的明细，供 GUI 展示 Calculation Details。
+        """
+        xc, yc = map(float, center)
+        radius = float(np.sqrt(xc ** 2 + yc ** 2))
+        slice_data = self._slice_mass((xc, yc), radius, n_slices)
+        if not slice_data:
+            return None
+        fos, detail = self._calculate_fos(slice_data, return_details=True)
+        return {
+            "center": (xc, yc),
+            "radius": radius,
+            "fos": float(fos),
+            "n_slices": len(slice_data),
+            "detail": detail,
+        }
 
     def _slice_mass(self, center, radius, n_slices):
         """
