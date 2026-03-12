@@ -151,22 +151,45 @@ class SlopeStabilityApp(QMainWindow):
         # 默认在 Main 视图下隐藏，Evaluation 时显示
         self.center_group.setVisible(False)
 
-        # Group 2.2: Evaluation experiments settings
-        self.eval_group = self.create_group("Evaluation Experiments", self.form_layout)
-        f_eval = QFormLayout()
-        self.add_input(f_eval, "Exp1 Slices Start", "1", "eval_slice_start")
-        self.add_input(f_eval, "Exp1 Slices End", "20", "eval_slice_end")
-        self.add_input(f_eval, "Exp2 Iter Start", "0", "eval_iter_start")
-        self.add_input(f_eval, "Exp2 Iter End", "50", "eval_iter_end")
-        self.add_input(f_eval, "Exp2 Fixed Slices", "15", "eval_iter_fixed_slices")
-        self.add_input(f_eval, "Exp3 Cohesion Min [kPa]", "0.0", "eval_c_min")
-        self.add_input(f_eval, "Exp3 Cohesion Max [kPa]", "20.0", "eval_c_max")
-        self.add_input(f_eval, "Exp3 Cohesion Points", "21", "eval_c_points")
-        self.add_input(f_eval, "Exp4 Friction Min [deg]", "0.0", "eval_phi_min")
-        self.add_input(f_eval, "Exp4 Friction Max [deg]", "50.0", "eval_phi_max")
-        self.add_input(f_eval, "Exp4 Friction Points", "26", "eval_phi_points")
-        self.eval_group.setLayout(f_eval)
-        self.eval_group.setVisible(False)
+        # Group 2.2: Evaluation only – Experiment 1
+        self.eval_groups = []
+        g_eval_1 = self.create_group("Experiment 1: Slices", self.form_layout)
+        f_eval_1 = QFormLayout()
+        self.add_input(f_eval_1, "Slices Start", "1", "eval_slice_start")
+        self.add_input(f_eval_1, "Slices End", "20", "eval_slice_end")
+        g_eval_1.setLayout(f_eval_1)
+        g_eval_1.setVisible(False)
+        self.eval_groups.append(g_eval_1)
+
+        # Group 2.3: Evaluation only – Experiment 2
+        g_eval_2 = self.create_group("Experiment 2: Iterations", self.form_layout)
+        f_eval_2 = QFormLayout()
+        self.add_input(f_eval_2, "Iter Start", "0", "eval_iter_start")
+        self.add_input(f_eval_2, "Iter End", "50", "eval_iter_end")
+        self.add_input(f_eval_2, "Fixed Slices", "15", "eval_iter_fixed_slices")
+        g_eval_2.setLayout(f_eval_2)
+        g_eval_2.setVisible(False)
+        self.eval_groups.append(g_eval_2)
+
+        # Group 2.4: Evaluation only – Experiment 3
+        g_eval_3 = self.create_group("Experiment 3: Cohesion Range", self.form_layout)
+        f_eval_3 = QFormLayout()
+        self.add_input(f_eval_3, "Cohesion Min [kPa]", "0.0", "eval_c_min")
+        self.add_input(f_eval_3, "Cohesion Max [kPa]", "20.0", "eval_c_max")
+        self.add_input(f_eval_3, "Cohesion Points", "21", "eval_c_points")
+        g_eval_3.setLayout(f_eval_3)
+        g_eval_3.setVisible(False)
+        self.eval_groups.append(g_eval_3)
+
+        # Group 2.5: Evaluation only – Experiment 4
+        g_eval_4 = self.create_group("Experiment 4: Friction Angle Range", self.form_layout)
+        f_eval_4 = QFormLayout()
+        self.add_input(f_eval_4, "Friction Min [deg]", "0.0", "eval_phi_min")
+        self.add_input(f_eval_4, "Friction Max [deg]", "50.0", "eval_phi_max")
+        self.add_input(f_eval_4, "Friction Points", "26", "eval_phi_points")
+        g_eval_4.setLayout(f_eval_4)
+        g_eval_4.setVisible(False)
+        self.eval_groups.append(g_eval_4)
 
         # Group 3: Analysis Settings (Fellenius only)
         self.sett_group = self.create_group("Analysis Settings", self.form_layout)
@@ -271,8 +294,9 @@ class SlopeStabilityApp(QMainWindow):
             self.run_btn.setText("RUN ANALYSIS")
             if hasattr(self, "center_group"):
                 self.center_group.setVisible(False)
-            if hasattr(self, "eval_group"):
-                self.eval_group.setVisible(False)
+            if hasattr(self, "eval_groups"):
+                for g in self.eval_groups:
+                    g.setVisible(False)
             if hasattr(self, "method_combo"):
                 self.method_combo.setVisible(True)
             if hasattr(self, "save_btn"):
@@ -288,8 +312,9 @@ class SlopeStabilityApp(QMainWindow):
             self.run_btn.setText("RUN EVALUATION")
             if hasattr(self, "center_group"):
                 self.center_group.setVisible(True)
-            if hasattr(self, "eval_group"):
-                self.eval_group.setVisible(True)
+            if hasattr(self, "eval_groups"):
+                for g in self.eval_groups:
+                    g.setVisible(True)
             # Evaluation 视图下隐藏 Analysis Settings 与 Search Grid
             if hasattr(self, "sett_group"):
                 self.sett_group.setVisible(False)
@@ -1032,6 +1057,15 @@ class SlopeStabilityApp(QMainWindow):
         ax1.plot(slices_list, e1_b, marker="s", linewidth=2.0, label="Bishop")
         ax1.plot(slices_list, e1_j, marker="^", linewidth=2.0, label="Janbu GPS")
         self._apply_eval_plot_style(ax1, "Experiment 1: FoS vs slices", "Number of slices n", "FoS")
+        tick_start = 5 * (slice_start // 5)
+        if tick_start < slice_start:
+            tick_start += 5
+        ticks = np.arange(tick_start, slice_end + 1, 5, dtype=int)
+        if ticks.size == 0 or ticks[0] != slice_start:
+            ticks = np.unique(np.concatenate(([slice_start], ticks)))
+        if ticks[-1] != slice_end:
+            ticks = np.unique(np.concatenate((ticks, [slice_end])))
+        ax1.set_xticks(ticks)
         ax1.legend()
 
         ax2.plot(iter_list, e2_f, linestyle="--", linewidth=1.8, label="Fellenius (reference)")
