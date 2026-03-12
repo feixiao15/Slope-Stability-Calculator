@@ -1,6 +1,9 @@
 
 import sys
 import numpy as np
+import csv
+from datetime import datetime
+from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QComboBox, QFormLayout, QGroupBox, QFrame, 
@@ -148,6 +151,23 @@ class SlopeStabilityApp(QMainWindow):
         # 默认在 Main 视图下隐藏，Evaluation 时显示
         self.center_group.setVisible(False)
 
+        # Group 2.2: Evaluation experiments settings
+        self.eval_group = self.create_group("Evaluation Experiments", self.form_layout)
+        f_eval = QFormLayout()
+        self.add_input(f_eval, "Exp1 Slices Start", "1", "eval_slice_start")
+        self.add_input(f_eval, "Exp1 Slices End", "20", "eval_slice_end")
+        self.add_input(f_eval, "Exp2 Iter Start", "0", "eval_iter_start")
+        self.add_input(f_eval, "Exp2 Iter End", "50", "eval_iter_end")
+        self.add_input(f_eval, "Exp2 Fixed Slices", "15", "eval_iter_fixed_slices")
+        self.add_input(f_eval, "Exp3 Cohesion Min [kPa]", "0.0", "eval_c_min")
+        self.add_input(f_eval, "Exp3 Cohesion Max [kPa]", "20.0", "eval_c_max")
+        self.add_input(f_eval, "Exp3 Cohesion Points", "21", "eval_c_points")
+        self.add_input(f_eval, "Exp4 Friction Min [deg]", "0.0", "eval_phi_min")
+        self.add_input(f_eval, "Exp4 Friction Max [deg]", "50.0", "eval_phi_max")
+        self.add_input(f_eval, "Exp4 Friction Points", "26", "eval_phi_points")
+        self.eval_group.setLayout(f_eval)
+        self.eval_group.setVisible(False)
+
         # Group 3: Analysis Settings (Fellenius only)
         self.sett_group = self.create_group("Analysis Settings", self.form_layout)
         f3 = QFormLayout()
@@ -177,6 +197,18 @@ class SlopeStabilityApp(QMainWindow):
         """)
         self.run_btn.clicked.connect(self.run_analysis)
         sidebar_layout.addWidget(self.run_btn)
+        self.save_btn = QPushButton("SAVE EVALUATION")
+        self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_btn.setFixedHeight(42)
+        self.save_btn.setStyleSheet("""
+            QPushButton { background-color: #3498db; color: white; font-weight: bold; font-size: 13px; border-radius: 6px; }
+            QPushButton:hover { background-color: #2980b9; }
+            QPushButton:disabled { background-color: #233246; color: #777; }
+        """)
+        self.save_btn.clicked.connect(self.save_evaluation_results)
+        self.save_btn.setVisible(False)
+        self.save_btn.setEnabled(False)
+        sidebar_layout.addWidget(self.save_btn)
         main_layout.addWidget(sidebar_frame)
 
         # --- RIGHT SIDE ---
@@ -207,6 +239,7 @@ class SlopeStabilityApp(QMainWindow):
         self.setup_plot_style()
         self.last_calc_details = None
         self.last_calc_method = ""
+        self.last_evaluation_result = None
         
         # Initialize visibility
         self.on_method_change(0)
@@ -238,10 +271,15 @@ class SlopeStabilityApp(QMainWindow):
             self.run_btn.setText("RUN ANALYSIS")
             if hasattr(self, "center_group"):
                 self.center_group.setVisible(False)
+            if hasattr(self, "eval_group"):
+                self.eval_group.setVisible(False)
             if hasattr(self, "method_combo"):
                 self.method_combo.setVisible(True)
+            if hasattr(self, "save_btn"):
+                self.save_btn.setVisible(False)
         else:
             self.clear_calculation_details()
+            self.last_evaluation_result = None
             self.result_label.setText("Evaluation | Compare Fellenius, Bishop, Janbu under same input.")
             self.result_label.setStyleSheet(
                 "background-color: rgba(30, 30, 46, 0.8); color: #5a9fd4; font-size: 14px; "
@@ -250,6 +288,8 @@ class SlopeStabilityApp(QMainWindow):
             self.run_btn.setText("RUN EVALUATION")
             if hasattr(self, "center_group"):
                 self.center_group.setVisible(True)
+            if hasattr(self, "eval_group"):
+                self.eval_group.setVisible(True)
             # Evaluation 视图下隐藏 Analysis Settings 与 Search Grid
             if hasattr(self, "sett_group"):
                 self.sett_group.setVisible(False)
@@ -257,6 +297,9 @@ class SlopeStabilityApp(QMainWindow):
                 self.grid_group.setVisible(False)
             if hasattr(self, "method_combo"):
                 self.method_combo.setVisible(False)
+            if hasattr(self, "save_btn"):
+                self.save_btn.setVisible(True)
+                self.save_btn.setEnabled(self.last_evaluation_result is not None)
         self.update_details_button_visibility()
 
     def on_method_change(self, index):
@@ -452,6 +495,75 @@ class SlopeStabilityApp(QMainWindow):
                 prev = float(f_now)
         return "\n".join(lines)
 
+    def get_int(self, key, default=0):
+        try:
+            return int(float(self.inputs[key].text()))
+        except Exception:
+            return int(default)
+
+    def _clamped_linspace(self, start, end, points, min_points=2):
+        p = max(int(points), int(min_points))
+        a, b = float(start), float(end)
+        if b < a:
+            a, b = b, a
+        if abs(b - a) < 1e-12:
+            b = a + 1e-6
+        return np.linspace(a, b, p)
+
+    def _apply_eval_plot_style(self, ax, title, xlabel, ylabel):
+        ax.set_title(title, color="#111111", pad=10)
+        ax.set_xlabel(xlabel, color="#111111")
+        ax.set_ylabel(ylabel, color="#111111")
+        ax.set_facecolor("#ffffff")
+        ax.grid(True, color="#d0d7de", linestyle="--", linewidth=0.8, alpha=0.9)
+        ax.tick_params(colors="#1f2328")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#8c959f")
+
+    def save_evaluation_results(self):
+        if self.last_evaluation_result is None:
+            QMessageBox.information(self, "Save Evaluation", "No evaluation results to save. Please run evaluation first.")
+            return
+
+        out_dir = Path(__file__).resolve().parent
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = out_dir / f"evaluation_results_{stamp}"
+        fig_path = base.with_suffix(".png")
+        csv_path = base.with_suffix(".csv")
+        meta_path = out_dir / f"evaluation_results_{stamp}_meta.txt"
+
+        self.figure.savefig(fig_path, dpi=300, bbox_inches="tight")
+
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["experiment", "x", "fellenius", "bishop", "janbu"])
+            for key in ("exp1", "exp2", "exp3", "exp4"):
+                exp = self.last_evaluation_result.get(key, {})
+                x = exp.get("x", [])
+                fell = exp.get("fellenius", [])
+                bish = exp.get("bishop", [])
+                janbu = exp.get("janbu", [])
+                for i in range(len(x)):
+                    writer.writerow([
+                        key,
+                        x[i],
+                        fell[i] if i < len(fell) else np.nan,
+                        bish[i] if i < len(bish) else np.nan,
+                        janbu[i] if i < len(janbu) else np.nan,
+                    ])
+
+        with open(meta_path, "w", encoding="utf-8") as f:
+            f.write("Evaluation Summary\n")
+            f.write("==================\n")
+            f.write(self.last_evaluation_result.get("summary", ""))
+            f.write("\n")
+
+        QMessageBox.information(
+            self,
+            "Save Evaluation",
+            f"Saved successfully:\n- {fig_path}\n- {csv_path}\n- {meta_path}"
+        )
+
     def run_analysis(self):
         method_idx = self.method_combo.currentIndex()
         view_idx = self.view_combo.currentIndex() if hasattr(self, "view_combo") else 0
@@ -466,6 +578,9 @@ class SlopeStabilityApp(QMainWindow):
             H = self.get_float('height')
 
             if view_idx == 0:
+                self.last_evaluation_result = None
+                if hasattr(self, "save_btn"):
+                    self.save_btn.setEnabled(False)
                 if method_idx == 0:
                     self.run_fellenius(c, phi, gamma, H)
                 elif method_idx == 1:
@@ -795,13 +910,6 @@ class SlopeStabilityApp(QMainWindow):
         self.canvas.draw()
 
     def run_evaluation(self, c, phi, gamma, H):
-        """
-        Evaluation 界面：在相同土性与几何、圆心坐标下，对比 Fellenius / Bishop / Janbu 三种方法，
-        并考察：
-          1) 不同条分数 slices (1–25, max iterations=20) 下三种方法的 FoS 变化；
-          2) 不同迭代次数 iterations (0–50, slices=15 固定) 下 Bishop / Janbu 的 FoS 变化，
-             同时绘制 Fellenius 的对比参考线。
-        """
         ru = self.get_float('ru')
         ratio = self.get_float('ratio')
         toe = self.get_float('toe_ext')
@@ -810,185 +918,153 @@ class SlopeStabilityApp(QMainWindow):
         xc = self.get_float('center_x')
         yc = self.get_float('center_y')
 
-        # 公共几何：Fellenius / Bishop 共享 1:1 坐标；Janbu 使用 GeometryBuilder
-        # 1) 基线计算：同一圆心 (xc, yc)、同一 slices、迭代上限 20
-        # Fellenius
-        fell = FelleniusAnalyzer(c, phi, gamma, ru)
-        fell.define_slope(H, ratio, toe_width=toe, crest_width=crest)
-        dummy = np.array([0.0])
-        fell_best, _ = fell.find_critical_fos(base_slices, dummy, dummy, plot=False, center=(xc, yc))
-        fos_fell_base = fell_best["fos"] if fell_best else np.nan
-        R_fell = fell_best["radius"] if fell_best else np.nan
+        slice_start = max(1, self.get_int("eval_slice_start", 1))
+        slice_end = max(slice_start, self.get_int("eval_slice_end", 20))
+        iter_start = max(0, self.get_int("eval_iter_start", 0))
+        iter_end = max(iter_start, self.get_int("eval_iter_end", 50))
+        iter_fixed_slices = max(1, self.get_int("eval_iter_fixed_slices", 15))
+        c_vals = self._clamped_linspace(
+            self.get_float("eval_c_min"),
+            self.get_float("eval_c_max"),
+            self.get_int("eval_c_points", 21),
+            min_points=2,
+        )
+        phi_vals = self._clamped_linspace(
+            self.get_float("eval_phi_min"),
+            self.get_float("eval_phi_max"),
+            self.get_int("eval_phi_points", 26),
+            min_points=2,
+        )
 
-        # Bishop（iterations 固定为 20）
-        bishop_iter_eval = 20
-        bish = BishopAnalyzer(c, phi, gamma, ru, iterations=bishop_iter_eval)
-        bish.define_slope(H, ratio, toe_width=toe, crest_width=crest)
-        bish_best, _ = bish.find_critical_fos(base_slices, dummy, dummy, plot=False, center=(xc, yc))
-        fos_bish_base = bish_best["fos"] if bish_best else np.nan
-        R_bish = bish_best["radius"] if bish_best else np.nan
+        iter_ref = max(1, iter_end)
+        slices_list = list(range(slice_start, slice_end + 1))
+        iter_list = list(range(iter_start, iter_end + 1))
 
-        # Janbu：使用 GeometryBuilder + 单中心模式的 find_critical_fos_circular_arc（max_iter=20）
         gb = GeometryBuilder(slope_height=H, slope_ratio=ratio, bottom_extension=toe, top_extension=crest)
         ground_profile, _region = gb.build()
         gx_dummy = np.array([0.0])
         gy_dummy = np.array([0.0])
-        janbu_best, _ = find_critical_fos_circular_arc(
-            ground_profile=ground_profile,
-            gamma=gamma,
-            c_prime=c,
-            phi_prime=phi,
-            ru=ru,
-            n_slices=base_slices,
-            center_grid_x=gx_dummy,
-            center_grid_y=gy_dummy,
-            entry_x_range=None,
-            q=0.0,
-            use_gps=True,
-            gps_tolerance=1e-6,
-            gps_max_iter=20,
-            require_exit_at_crest=True,
-            center=(xc, yc),
-            x_entry_single=None,
-        )
-        fos_janbu_base = janbu_best["fos"] if janbu_best else np.nan
-        R_janbu = janbu_best["radius"] if janbu_best else np.nan
+        dummy = np.array([0.0])
 
-        # 在结果标签中输出类似表格的对比
-        table_text = (
-            "Evaluation | Most Dangerous Circle (single given center)\n"
-            f"  Fellenius: FoS = {fos_fell_base:.3f} | R = {R_fell:.3f}\n"
-            f"  Bishop   : FoS = {fos_bish_base:.3f} | R = {R_bish:.3f}\n"
-            f"  Janbu GPS: FoS = {fos_janbu_base:.3f} | R = {R_janbu:.3f}\n"
-            f"  Center (xc, yc) = ({xc:.3f}, {yc:.3f}),  H = {H:.3f}"
+        def calc_triplet(c_val, phi_val, n_slices, bishop_iter, janbu_iter):
+            fell = FelleniusAnalyzer(c_val, phi_val, gamma, ru)
+            fell.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+            fell_best, _ = fell.find_critical_fos(n_slices, dummy, dummy, plot=False, center=(xc, yc))
+            fos_fell = float(fell_best["fos"]) if fell_best else np.nan
+
+            bish = BishopAnalyzer(c_val, phi_val, gamma, ru, iterations=max(1, int(bishop_iter)))
+            bish.define_slope(H, ratio, toe_width=toe, crest_width=crest)
+            bish_best, _ = bish.find_critical_fos(n_slices, dummy, dummy, plot=False, center=(xc, yc))
+            fos_bish = float(bish_best["fos"]) if bish_best else np.nan
+
+            janbu_best, _ = find_critical_fos_circular_arc(
+                ground_profile=ground_profile,
+                gamma=gamma,
+                c_prime=c_val,
+                phi_prime=phi_val,
+                ru=ru,
+                n_slices=n_slices,
+                center_grid_x=gx_dummy,
+                center_grid_y=gy_dummy,
+                entry_x_range=None,
+                q=0.0,
+                use_gps=True,
+                gps_tolerance=1e-6,
+                gps_max_iter=max(1, int(janbu_iter)),
+                require_exit_at_crest=True,
+                center=(xc, yc),
+                x_entry_single=None,
+            )
+            fos_janbu = float(janbu_best["fos"]) if janbu_best else np.nan
+            return fos_fell, fos_bish, fos_janbu
+
+        # Base comparison
+        fos_fell_base, fos_bish_base, fos_janbu_base = calc_triplet(
+            c_val=c, phi_val=phi, n_slices=base_slices, bishop_iter=iter_ref, janbu_iter=iter_ref
         )
-        self.result_label.setText(table_text)
+
+        summary_text = (
+            "Evaluation | 4 experiments at fixed center\n"
+            f"  Center (xc, yc)=({xc:.3f}, {yc:.3f}), H={H:.3f}\n"
+            f"  Base FoS (slices={base_slices}, iter={iter_ref}): "
+            f"Fellenius={fos_fell_base:.3f}, Bishop={fos_bish_base:.3f}, Janbu={fos_janbu_base:.3f}"
+        )
+        self.result_label.setText(summary_text)
         self.result_label.setStyleSheet(
             "background-color: rgba(30, 30, 46, 0.9); color: #f0f0f0; font-size: 13px; "
             "padding: 10px; border: 1px solid #5a9fd4; border-radius: 4px;"
         )
 
-        # 2) 绘制两组实验图：上 slices 实验，下 iterations 实验
-        self.figure.clear()
-        ax1 = self.figure.add_subplot(211)
-        ax2 = self.figure.add_subplot(212)
-
-        color_fell = "#42a5f5"   
-        color_bish = "#ffb74d"   
-        color_janbu = "#66bb6a"  
-        color_ref = "#bdbdbd"    
-
-        # ---- 实验 1：不同 slices  ----
-        max_slices = 20
-        slices_list = list(range(1, max_slices + 1))
-        fos_fell_list = []
-        fos_bish_list = []
-        fos_janbu_list = []
-
+        # Experiment 1: FoS vs slices
+        e1_f, e1_b, e1_j = [], [], []
         for n in slices_list:
-            # Fellenius
-            fell_best_n, _ = fell.find_critical_fos(n, dummy, dummy, plot=False, center=(xc, yc))
-            fos_fell_list.append(fell_best_n["fos"] if fell_best_n else np.nan)
+            f, b, j = calc_triplet(c, phi, n_slices=n, bishop_iter=iter_ref, janbu_iter=iter_ref)
+            e1_f.append(f); e1_b.append(b); e1_j.append(j)
 
-            # Bishop（同一迭代上限 20）
-            bish_n = BishopAnalyzer(c, phi, gamma, ru, iterations=bishop_iter_eval)
-            bish_n.define_slope(H, ratio, toe_width=toe, crest_width=crest)
-            bish_best_n, _ = bish_n.find_critical_fos(n, dummy, dummy, plot=False, center=(xc, yc))
-            fos_bish_list.append(bish_best_n["fos"] if bish_best_n else np.nan)
+        # Experiment 2: FoS vs iterations (slices fixed)
+        e2_f, e2_b, e2_j = [], [], []
+        f_ref, _, _ = calc_triplet(c, phi, n_slices=iter_fixed_slices, bishop_iter=iter_ref, janbu_iter=iter_ref)
+        for it in iter_list:
+            _, b, j = calc_triplet(c, phi, n_slices=iter_fixed_slices, bishop_iter=max(1, it), janbu_iter=max(1, it))
+            e2_f.append(f_ref); e2_b.append(b); e2_j.append(j)
 
-            # Janbu
-            janbu_best_n, _ = find_critical_fos_circular_arc(
-                ground_profile=ground_profile,
-                gamma=gamma,
-                c_prime=c,
-                phi_prime=phi,
-                ru=ru,
-                n_slices=n,
-                center_grid_x=gx_dummy,
-                center_grid_y=gy_dummy,
-                entry_x_range=None,
-                q=0.0,
-                use_gps=True,
-                gps_tolerance=1e-6,
-                gps_max_iter=20,
-                require_exit_at_crest=True,
-                center=(xc, yc),
-                x_entry_single=None,
-            )
-            fos_janbu_list.append(janbu_best_n["fos"] if janbu_best_n else np.nan)
+        # Experiment 3: FoS vs cohesion range
+        e3_f, e3_b, e3_j = [], [], []
+        for c_now in c_vals:
+            f, b, j = calc_triplet(float(c_now), phi, n_slices=base_slices, bishop_iter=iter_ref, janbu_iter=iter_ref)
+            e3_f.append(f); e3_b.append(b); e3_j.append(j)
 
-        ax1.plot(slices_list, fos_fell_list, marker="o", color=color_fell, linewidth=2.0, label="Fellenius")
-        ax1.plot(slices_list, fos_bish_list, marker="s", color=color_bish, linewidth=2.0, label="Bishop")
-        ax1.plot(slices_list, fos_janbu_list, marker="^", color=color_janbu, linewidth=2.0, label="Janbu GPS")
-        ax1.set_xlabel("Number of slices n")
-        ax1.set_ylabel("FoS")
-        ax1.set_title("Experiment 1: FoS vs slices (max iterations = 20)")
-        ax1.grid(True, color="#444444", linestyle=":", alpha=0.7)
+        # Experiment 4: FoS vs friction angle range
+        e4_f, e4_b, e4_j = [], [], []
+        for phi_now in phi_vals:
+            f, b, j = calc_triplet(c, float(phi_now), n_slices=base_slices, bishop_iter=iter_ref, janbu_iter=iter_ref)
+            e4_f.append(f); e4_b.append(b); e4_j.append(j)
+
+        # Plot 2x2 with light style (verification-like)
+        self.figure.clear()
+        self.figure.patch.set_facecolor("#ffffff")
+        ax1 = self.figure.add_subplot(221)
+        ax2 = self.figure.add_subplot(222)
+        ax3 = self.figure.add_subplot(223)
+        ax4 = self.figure.add_subplot(224)
+
+        ax1.plot(slices_list, e1_f, marker="o", linewidth=2.0, label="Fellenius")
+        ax1.plot(slices_list, e1_b, marker="s", linewidth=2.0, label="Bishop")
+        ax1.plot(slices_list, e1_j, marker="^", linewidth=2.0, label="Janbu GPS")
+        self._apply_eval_plot_style(ax1, "Experiment 1: FoS vs slices", "Number of slices n", "FoS")
         ax1.legend()
 
-        # ---- 实验 2：不同迭代次数 (0–50)，slices 固定 15 ----
-        fixed_slices = 15
-        iter_max = 50
-        iter_list = list(range(0, iter_max + 1))
-        fos_fell_iter = []
-        fos_bish_iter = []
-        fos_janbu_iter = []
-
-        # Fellenius 在该实验中不随迭代变化，只作为水平参考线
-        fell_fixed_best, _ = fell.find_critical_fos(fixed_slices, dummy, dummy, plot=False, center=(xc, yc))
-        fos_fell_fixed = fell_fixed_best["fos"] if fell_fixed_best else np.nan
-
-        for it in iter_list:
-            fos_fell_iter.append(fos_fell_fixed)
-
-            # Bishop：iterations 直接等于 it
-            bish_it = BishopAnalyzer(c, phi, gamma, ru, iterations=it)
-            bish_it.define_slope(H, ratio, toe_width=toe, crest_width=crest)
-            bish_best_it, _ = bish_it.find_critical_fos(fixed_slices, dummy, dummy, plot=False, center=(xc, yc))
-            fos_bish_iter.append(bish_best_it["fos"] if bish_best_it else np.nan)
-
-            # Janbu：gps_max_iter = it
-            janbu_best_it, _ = find_critical_fos_circular_arc(
-                ground_profile=ground_profile,
-                gamma=gamma,
-                c_prime=c,
-                phi_prime=phi,
-                ru=ru,
-                n_slices=fixed_slices,
-                center_grid_x=gx_dummy,
-                center_grid_y=gy_dummy,
-                entry_x_range=None,
-                q=0.0,
-                use_gps=True,
-                gps_tolerance=1e-6,
-                gps_max_iter=max(1, it),  # 至少做一次 GPS 步，it=0 时近似为一次更新
-                require_exit_at_crest=True,
-                center=(xc, yc),
-                x_entry_single=None,
-            )
-            fos_janbu_iter.append(janbu_best_it["fos"] if janbu_best_it else np.nan)
-
-        ax2.plot(iter_list, fos_fell_iter, linestyle="--", color=color_ref, linewidth=1.8, label="Fellenius (reference)")
-        ax2.plot(iter_list, fos_bish_iter, marker="s", markevery=5, color=color_bish, linewidth=2.0, label="Bishop")
-        ax2.plot(iter_list, fos_janbu_iter, marker="^", markevery=5, color=color_janbu, linewidth=2.0, label="Janbu GPS")
-        ax2.set_xlabel("Number of iterations")
-        ax2.set_ylabel("FoS")
-        ax2.set_title(f"Experiment 2: FoS vs iterations (slices = {fixed_slices})")
-        ax2.grid(True, color="#444444", linestyle=":", alpha=0.7)
+        ax2.plot(iter_list, e2_f, linestyle="--", linewidth=1.8, label="Fellenius (reference)")
+        ax2.plot(iter_list, e2_b, marker="s", markevery=max(1, len(iter_list)//10), linewidth=2.0, label="Bishop")
+        ax2.plot(iter_list, e2_j, marker="^", markevery=max(1, len(iter_list)//10), linewidth=2.0, label="Janbu GPS")
+        self._apply_eval_plot_style(ax2, f"Experiment 2: FoS vs iterations", "Number of iterations", "FoS")
         ax2.legend()
 
-        for ax in (ax1, ax2):
-            ax.set_facecolor("#0f172a")  # 略浅的深蓝背景，提高对比度
-            ax.tick_params(colors="white")
-            ax.xaxis.label.set_color("white")
-            ax.yaxis.label.set_color("white")
-            ax.title.set_color("white")
-            for spine in ax.spines.values():
-                spine.set_edgecolor("#777777")
+        ax3.plot(c_vals, e3_f, marker="o", linewidth=2.0, label="Fellenius")
+        ax3.plot(c_vals, e3_b, marker="s", linewidth=2.0, label="Bishop")
+        ax3.plot(c_vals, e3_j, marker="^", linewidth=2.0, label="Janbu GPS")
+        self._apply_eval_plot_style(ax3, "Experiment 3: FoS vs cohesion", "Cohesion c' (kPa)", "FoS")
+        ax3.legend()
+
+        ax4.plot(phi_vals, e4_f, marker="o", linewidth=2.0, label="Fellenius")
+        ax4.plot(phi_vals, e4_b, marker="s", linewidth=2.0, label="Bishop")
+        ax4.plot(phi_vals, e4_j, marker="^", linewidth=2.0, label="Janbu GPS")
+        self._apply_eval_plot_style(ax4, "Experiment 4: FoS vs friction angle", "Friction angle φ' (deg)", "FoS")
+        ax4.legend()
 
         self.figure.tight_layout()
         self.canvas.draw()
         self.clear_calculation_details()
+
+        self.last_evaluation_result = {
+            "summary": summary_text,
+            "exp1": {"x": slices_list, "fellenius": e1_f, "bishop": e1_b, "janbu": e1_j},
+            "exp2": {"x": iter_list, "fellenius": e2_f, "bishop": e2_b, "janbu": e2_j},
+            "exp3": {"x": [float(v) for v in c_vals], "fellenius": e3_f, "bishop": e3_b, "janbu": e3_j},
+            "exp4": {"x": [float(v) for v in phi_vals], "fellenius": e4_f, "bishop": e4_b, "janbu": e4_j},
+        }
+        if hasattr(self, "save_btn"):
+            self.save_btn.setEnabled(True)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
