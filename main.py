@@ -586,10 +586,49 @@ class SlopeStabilityApp(QMainWindow):
             f.write(self.last_evaluation_result.get("summary", ""))
             f.write("\n")
 
+        # Save each experiment as an individual figure
+        def save_single_experiment(exp_key, title, xlabel, ylabel, filename_suffix):
+            exp = self.last_evaluation_result.get(exp_key, {})
+            x = np.asarray(exp.get("x", []), dtype=float)
+            y_f = np.asarray(exp.get("fellenius", []), dtype=float)
+            y_b = np.asarray(exp.get("bishop", []), dtype=float)
+            y_j = np.asarray(exp.get("janbu", []), dtype=float)
+            if x.size == 0:
+                return None
+
+            fig = Figure(figsize=(8, 5), facecolor="#ffffff")
+            ax = fig.add_subplot(111)
+            ax.plot(x, y_f, marker="o", linewidth=2.0, label="Fellenius")
+            ax.plot(x, y_b, marker="s", linewidth=2.0, label="Bishop")
+            ax.plot(x, y_j, marker="^", linewidth=2.0, label="Janbu GPS")
+            self._apply_eval_plot_style(ax, title, xlabel, ylabel)
+            if exp_key == "exp1" and x.size > 0:
+                x_min = int(np.floor(np.nanmin(x)))
+                x_max = int(np.ceil(np.nanmax(x)))
+                tick_start = 5 * (x_min // 5)
+                if tick_start < x_min:
+                    tick_start += 5
+                ticks = np.arange(tick_start, x_max + 1, 5, dtype=int)
+                if ticks.size == 0 or ticks[0] != x_min:
+                    ticks = np.unique(np.concatenate(([x_min], ticks)))
+                if ticks[-1] != x_max:
+                    ticks = np.unique(np.concatenate((ticks, [x_max])))
+                ax.set_xticks(ticks)
+            ax.legend()
+            fig.tight_layout()
+            out_path = out_dir / f"evaluation_results_{stamp}_{filename_suffix}.png"
+            fig.savefig(out_path, dpi=300, bbox_inches="tight")
+            return out_path
+
+        p1 = save_single_experiment("exp1", "Experiment 1: FoS vs slices", "Number of slices n", "FoS", "exp1")
+        p2 = save_single_experiment("exp2", "Experiment 2: FoS vs iterations", "Number of iterations", "FoS", "exp2")
+        p3 = save_single_experiment("exp3", "Experiment 3: FoS vs cohesion", "Cohesion c' (kPa)", "FoS", "exp3")
+        p4 = save_single_experiment("exp4", "Experiment 4: FoS vs friction angle", "Friction angle φ' (deg)", "FoS", "exp4")
+
         QMessageBox.information(
             self,
             "Save Evaluation",
-            f"Saved successfully:\n- {fig_path}\n- {csv_path}\n- {meta_path}"
+            f"Saved successfully:\n- {fig_path}\n- {csv_path}\n- {meta_path}\n- {p1}\n- {p2}\n- {p3}\n- {p4}"
         )
 
     def run_analysis(self):
