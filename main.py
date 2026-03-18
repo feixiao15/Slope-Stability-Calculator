@@ -806,26 +806,29 @@ class SlopeStabilityApp(QMainWindow):
         ax2.set_xlabel("Depth Factor D", color=text_color)
         ax2.set_ylabel("Stability Number N", color=text_color)
         
-        d_range = np.linspace(1.0, 4.0, 50)
-        coeffs = solver.chart.depth_coeffs
-        sorted_betas = sorted(coeffs.keys(), reverse=True) 
+        d_range = np.linspace(1.0, 4.5, 80)
+        chart2_models = solver.chart.chart2_models
+        chart2_data = solver.chart.chart2_data
+        sorted_betas = sorted(chart2_models.keys(), reverse=True)
         
         for b in sorted_betas:
-            # Plot fitted curve
-            A, k = coeffs[b]
-            n_vals = [max(0, 0.181 - A * (d**-k)) for d in d_range]
+            # Plot chart2 curve with auto mode (power fit + linear fallback)
+            n_vals = [solver.chart._calculate_depth_N(b, d) for d in d_range]
             
             lw = 2 if abs(b - beta_in) < 5 else 1
             alpha = 1.0 if is_depth_mode else 0.3
             color = line_color_active if is_depth_mode else line_color_inactive
             
             ax2.plot(d_range, n_vals, color=color, alpha=alpha, linewidth=lw)
+            # Overlay source points for visual verification
+            d_raw, n_raw = chart2_data[b]
+            ax2.scatter(d_raw, n_raw, color=color, alpha=alpha * 0.7, s=12)
             # Label
             if is_depth_mode:
                 ax2.text(d_range[-1], n_vals[-1], f" β={b}°", color=color, fontsize=8, verticalalignment='center')
 
-        ax2.set_xlim(1, 4)
-        ax2.set_ylim(0.10, 0.20)
+        ax2.set_xlim(1, 4.5)
+        ax2.set_ylim(0.09, 0.20)
         ax2.grid(True, color=grid_color, linestyle=':', alpha=0.5)
 
         # Highlight active chart

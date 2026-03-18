@@ -16,44 +16,66 @@ class TaylorStabilityChart:
         # Data points taken from key turning points and grid intersections of the original chart to ensure exact shape match
         self.chart1_data = {
             0: (
-                np.array([53.0, 55.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0]),
-                np.array([0.181, 0.184, 0.193, 0.205, 0.218, 0.229, 0.241, 0.252, 0.261])
+                np.array([0.0, 54.0, 60.0, 66.0, 80.0, 90.0]),
+                np.array([0.18, 0.18, 0.19, 0.20, 0.23, 0.26])
             ),
             5: (
-                np.array([8.0, 12.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]),
-                np.array([0, 0.045, 0.060, 0.082, 0.114, 0.137, 0.156, 0.173, 0.189, 0.204, 0.218])
+                np.array([5.0, 10.0, 16.0, 20.0, 30.0, 50.0, 60.0, 70.0, 90.0]),
+                np.array([0.0, 0.045, 0.075, 0.087, 0.11, 0.145, 0.162, 0.183, 0.24])
             ),
             10: (
-                np.array([10, 16.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]),
-                np.array([0, 0.045, 0.060, 0.088, 0.110, 0.129, 0.147, 0.163, 0.178, 0.192])
+                np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 90.0]),
+                np.array([0.0, 0.045, 0.075, 0.10, 0.12, 0.14, 0.165, 0.22])
             ),
             15: (
-                np.array([15,22.0, 25.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]),
-                np.array([0, 0.040, 0.050, 0.066, 0.090, 0.109, 0.125, 0.141, 0.155, 0.169])
+                np.array([15.0, 20.0, 30.0, 40.0, 50.0, 70.0, 90.0]),
+                np.array([0.0, 0.02, 0.045, 0.07, 0.095, 0.14, 0.20])
             ),
             20: (
-                np.array([20, 28.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]),
-                np.array([0, 0.040, 0.048, 0.075, 0.094, 0.111, 0.126, 0.140, 0.152])
+                np.array([20.0, 40.0, 50.0, 70.0, 90.0]),
+                np.array([0.0, 0.05, 0.075, 0.12, 0.185])
             ),
             25: (
-                np.array([25, 35.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]),
-                np.array([0, 0.040, 0.055, 0.081, 0.098, 0.113, 0.126, 0.138])
+                np.array([25.0, 40.0, 60.0, 80.0, 90.0]),
+                np.array([0.0, 0.035, 0.08, 0.13, 0.17])
             )
         }
 
         # ==========================================
-        # Chart 2 Parameters: Phi=0, Beta < 53
+        # Chart 2 Data: Phi=0, Beta < 53
         # ==========================================
-        # Keep the original power function decay model, as the previous fitting was good
-        # N = 0.181 - A * D^(-k)
-        self.depth_coeffs = {
-            53.0: [0.000, 1.0], # Limit
-            45.0: [0.011, 2.5],
-            30.0: [0.066, 2.7],
-            22.5: [0.119, 2.5],
-            15.0: [0.226, 2.5],
-            7.5:  [0.324, 2.0]
+        # Format: { beta_value: (D_points_array, N_values_array) }
+        # Use the latest manually read points from the original chart.
+        self.chart2_data = {
+            7.5: (
+                np.array([1.65, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]),
+                np.array([0.09, 0.106, 0.126, 0.14, 0.149, 0.156, 0.162])
+            ),
+            15.0: (
+                np.array([1.02, 1.5, 2.0, 2.5, 3.0, 4.0, 4.5]),
+                np.array([0.09, 0.128, 0.15, 0.163, 0.168, 0.174, 0.175])
+            ),
+            22.5: (
+                np.array([1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.5]),
+                np.array([0.114, 0.134, 0.152, 0.166, 0.172, 0.177, 0.179])
+            ),
+            30.0: (
+                np.array([1.0, 1.1, 1.5, 2.0, 2.5, 3.0, 4.5]),
+                np.array([0.132, 0.146, 0.164, 0.172, 0.176, 0.178, 0.179])
+            ),
+            45.0: (
+                np.array([1.0, 1.1, 1.5, 2.0, 2.9, 4.5]),
+                np.array([0.166, 0.17, 0.17, 0.178, 0.18, 0.18])
+            ),
+            53.0: (
+                np.array([1.0, 4.5]),
+                np.array([0.181, 0.181])
+            )
         }
+        # For each beta curve, automatically choose:
+        # 1) power-law fit if it is accurate enough
+        # 2) otherwise fallback to piecewise linear interpolation (same style as chart1)
+        self.chart2_models = self._build_chart2_models()
 
     def _get_N_from_chart1(self, phi, beta):
         """
@@ -93,22 +115,86 @@ class TaylorStabilityChart:
         """Helper function: linear interpolation of Beta on a single Phi curve"""
         beta_arr, n_arr = self.chart1_data[phi_key]
         
-        # Special handling for Phi=0 horizontal segment
-        if phi_key == 0 and beta < 53:
-            return 0.181
-        
         # If Beta is less than the starting Beta of this curve (e.g., Phi=25 when Beta=10)
         if beta < beta_arr[0]:
             return np.nan # or 0, indicating extremely stable
             
         return np.interp(beta, beta_arr, n_arr)
 
+    def _fit_power_curve(self, d_arr, n_arr, n_limit=0.181):
+        """
+        Try fitting N = n_limit - A * D^(-k).
+        Return model metrics; return None if fitting is not feasible.
+        """
+        delta = n_limit - n_arr
+        valid = delta > 1e-6
+        if np.count_nonzero(valid) < 2:
+            return None
+
+        x = np.log(d_arr[valid])
+        y = np.log(delta[valid])
+        slope, intercept = np.polyfit(x, y, 1)
+        k = -slope
+        A = float(np.exp(intercept))
+
+        if not np.isfinite(A) or not np.isfinite(k) or A < 0 or k <= 0:
+            return None
+
+        pred = n_limit - A * (d_arr ** (-k))
+        err = pred - n_arr
+        rmse = float(np.sqrt(np.mean(err ** 2)))
+        max_err = float(np.max(np.abs(err)))
+
+        return {
+            "type": "power",
+            "A": A,
+            "k": float(k),
+            "n_limit": float(n_limit),
+            "rmse": rmse,
+            "max_err": max_err
+        }
+
+    def _build_chart2_models(self):
+        """
+        Build per-beta models for chart2.
+        If power fit is not good, fallback to linear interpolation.
+        """
+        models = {}
+        # Tolerance selected based on chart reading uncertainty.
+        rmse_threshold = 0.002
+        max_err_threshold = 0.005
+
+        for beta, (d_arr, n_arr) in self.chart2_data.items():
+            power_model = self._fit_power_curve(d_arr, n_arr)
+            if (
+                power_model is not None
+                and power_model["rmse"] <= rmse_threshold
+                and power_model["max_err"] <= max_err_threshold
+            ):
+                models[beta] = power_model
+            else:
+                models[beta] = {
+                    "type": "linear",
+                    "d_arr": d_arr,
+                    "n_arr": n_arr
+                }
+        return models
+
     def _calculate_depth_N(self, beta_key, D):
-        """Chart 2 calculation formula"""
-        if beta_key not in self.depth_coeffs: return 0.181
-        if D < 1.0: D = 1.0
-        A, k = self.depth_coeffs[beta_key]
-        return max(0, 0.181 - A * (D ** -k))
+        """Chart 2 calculation: power fit or piecewise linear fallback."""
+        if beta_key not in self.chart2_models:
+            return 0.181
+        if D < 1.0:
+            D = 1.0
+
+        model = self.chart2_models[beta_key]
+        if model["type"] == "power":
+            n = model["n_limit"] - model["A"] * (D ** (-model["k"]))
+            return float(np.clip(n, 0.0, 0.181))
+
+        d_arr = model["d_arr"]
+        n_arr = model["n_arr"]
+        return float(np.interp(D, d_arr, n_arr))
 
     def get_stability_number(self, phi, beta, D=1.0):
         """
@@ -119,7 +205,7 @@ class TaylorStabilityChart:
         # =============================================
         if phi == 0 and beta < 53:
             # Chart 2 interpolation logic
-            beta_keys = sorted(self.depth_coeffs.keys()) # [7.5, ..., 53]
+            beta_keys = sorted(self.chart2_models.keys()) # [7.5, ..., 53]
             
             b_low = max([b for b in beta_keys if b <= beta], default=7.5)
             b_high = min([b for b in beta_keys if b >= beta], default=53)
@@ -145,12 +231,14 @@ class TaylorStabilityChart:
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
         
         # --- Verify Chart 1 ---
-        betas = np.linspace(5, 90, 400) # Subdivide into 400 points to check smoothness
+        betas = np.linspace(0, 90, 400) # Subdivide into 400 points to check smoothness
         phis = [0, 5, 10, 15, 20, 25]
         colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown']
         
         for i, phi in enumerate(phis):
-            Ns = [self.get_stability_number(phi, b, D=10) for b in betas]
+            # Chart 1 verification should always use Chart 1 interpolation directly
+            # (avoid switching to Chart 2 when phi=0 and beta<53)
+            Ns = [self._get_N_from_chart1(phi, b) for b in betas]
             ax1.plot(betas, Ns, label=f'φ = {phi}°', color=colors[i], linewidth=2)
             
         ax1.set_title("Chart 1 Verification: Piecewise Linear (Exact Shape)")
@@ -163,17 +251,20 @@ class TaylorStabilityChart:
         ax1.axvline(53, color='k', linestyle=':', alpha=0.3)
 
         # --- Verify Chart 2 ---
-        Ds = np.linspace(1.0, 4.0, 100)
+        Ds = np.linspace(1.0, 4.5, 140)
         target_betas = [53, 45, 30, 22.5, 15, 7.5]
         
         for beta in target_betas:
-            # Force Chart 2 logic (phi=0, beta<53)
-            # Note: when beta=53, code logic usually goes to Chart 1's 0.181, but here we slightly adjust beta to test Chart 2 formula
-            test_beta = beta - 0.01 if beta == 53 else beta
-            Ns = [self.get_stability_number(0, test_beta, D=d) for d in Ds]
+            if beta == 53:
+                Ns = [self._calculate_depth_N(53.0, d) for d in Ds]
+            else:
+                Ns = [self.get_stability_number(0, beta, D=d) for d in Ds]
             ax2.plot(Ds, Ns, label=f'β = {beta}°')
 
-        ax2.set_title("Chart 2 Verification: Depth Factor (φ=0, β<53°)")
+            d_raw, n_raw = self.chart2_data[beta]
+            ax2.scatter(d_raw, n_raw, s=16, alpha=0.7)
+
+        ax2.set_title("Chart 2 Verification: Auto fit + linear fallback (φ=0, β<53°)")
         ax2.set_xlabel("Depth Factor D")
         ax2.set_ylabel("Stability Number N")
         ax2.grid(True, linestyle='--', alpha=0.5)
