@@ -22,8 +22,8 @@ from fellenius import FelleniusAnalyzer
 from taylor import TaylorSolver
 from janbu import GeometryBuilder, find_critical_fos_circular_arc, calculate_fos_for_circular_arc
 
-# Fellenius / Taylor 的具体实现已移动到独立模块 `fellenius.py` / `taylor.py`，
-# 这里不再重复定义，仅在后续 GUI 逻辑中直接实例化并调用这些 solver。
+# Concrete Fellenius/Taylor implementations live in `fellenius.py`/`taylor.py`.
+# This GUI module only instantiates and calls those solvers.
 
 # ==========================================
 # 3. GUI IMPLEMENTATION
@@ -141,14 +141,14 @@ class SlopeStabilityApp(QMainWindow):
         self.field_groups['beta'] = (f2.labelForField(self.inputs['beta']), self.inputs['beta'])
         self.field_groups['D'] = (f2.labelForField(self.inputs['depth_factor']), self.inputs['depth_factor'])
 
-        # Group 2.1: Evaluation only – 滑动面圆心
+        # Group 2.1: Evaluation only - slip surface center
         g_center = self.create_group("Slip Surface Center", self.form_layout)
         f_center = QFormLayout()
         self.add_input(f_center, "Circle Center X (xc) [m]", "1.58", "center_x")
         self.add_input(f_center, "Circle Center Y (yc) [m]", "11.05", "center_y")
         g_center.setLayout(f_center)
         self.center_group = g_center
-        # 默认在 Main 视图下隐藏，Evaluation 时显示
+        # Hidden in Main view, visible in Evaluation view.
         self.center_group.setVisible(False)
 
         # Group 2.2: Evaluation only – Experiment 1
@@ -285,8 +285,8 @@ class SlopeStabilityApp(QMainWindow):
     def on_view_change(self, index):
         """
         View mode:
-        0 - Main（单方法分析，默认，与原来行为一致）
-        1 - Evaluation（同时对比 Fellenius/Bishop/Janbu 并做 slices / iterations 实验）
+        0 - Main (single-method analysis, default behavior)
+        1 - Evaluation (compare Fellenius/Bishop/Janbu + experiments)
         """
         self.reset_figure()
         if index == 0:
@@ -315,7 +315,7 @@ class SlopeStabilityApp(QMainWindow):
             if hasattr(self, "eval_groups"):
                 for g in self.eval_groups:
                     g.setVisible(True)
-            # Evaluation 视图下隐藏 Analysis Settings 与 Search Grid
+            # Hide Analysis Settings and Search Grid in Evaluation view.
             if hasattr(self, "sett_group"):
                 self.sett_group.setVisible(False)
             if hasattr(self, "grid_group"):
@@ -366,7 +366,7 @@ class SlopeStabilityApp(QMainWindow):
                 pass  # Colorbar may already be removed
             self.cbar = None
         self.figure.clear()
-        # Evaluation 会改成白底，这里统一恢复主界面深色底
+        # Evaluation mode uses white background; restore dark main background.
         self.figure.patch.set_facecolor('#1e1e2e')
         self.ax = self.figure.add_subplot(111)
         self.setup_plot_style()
@@ -716,14 +716,14 @@ class SlopeStabilityApp(QMainWindow):
         gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
         gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
 
-        # 默认不再强制“只过坡脚”，而是在整个坡脚平台宽度 [-toe_ext, 0] 上遍历入口点
+        # Default behavior scans entry points across toe platform [-toe_ext, 0].
         if toe > 0:
-            # 以约 0.5m 步长离散入口点，至少 3 个点
+            # Discretize entry points at ~0.5 m spacing, at least 3 points.
             step = 0.5
             n_entry = max(3, int(toe / step) + 1)
             entry_x_range = np.linspace(-toe, 0.0, n_entry)
         else:
-            # toe_ext 非正时退回只过坡脚
+            # Fallback to toe-only entry when toe_ext is non-positive.
             entry_x_range = None
         
         best, results = analyzer.find_critical_fos(
@@ -883,14 +883,14 @@ class SlopeStabilityApp(QMainWindow):
 
     def run_janbu(self, c, phi, gamma, H):
         """
-        使用 Janbu GPS 圆弧搜索接口，在给定圆心搜索网格内寻找最小 FoS。
-        几何与输入参数风格与 Bishop/Fellenius 保持一致：
-        - H: 坡高
-        - ratio: 坡度比 1V:mH
-        - toe_ext: 坡脚前平台长度 -> GeometryBuilder.bottom_extension
-        - crest_ext: 坡顶后平台长度 -> GeometryBuilder.top_extension
-        - slices: 条分数
-        - grid_x/y_*: 圆心搜索范围
+        Run Janbu GPS circular-arc search on the specified center grid.
+        Geometry/input conventions are aligned with Bishop/Fellenius:
+        - H: slope height
+        - ratio: slope ratio 1V:mH
+        - toe_ext: toe platform length -> GeometryBuilder.bottom_extension
+        - crest_ext: crest platform length -> GeometryBuilder.top_extension
+        - slices: number of slices
+        - grid_x/y_*: center search ranges
         """
         ru = self.get_float('ru')
         ratio = self.get_float('ratio')
@@ -898,12 +898,12 @@ class SlopeStabilityApp(QMainWindow):
         crest = self.get_float('crest_ext')
         slices = int(self.get_float('slices'))
 
-        # 1. 构建 Janbu 几何（ground_profile 供计算，region 可用于填充）
+        # 1. Build Janbu geometry (`ground_profile` for calculation).
         gb = GeometryBuilder(slope_height=H, slope_ratio=ratio, bottom_extension=toe, top_extension=crest)
         ground_profile, _region = gb.build()
         gp = np.asarray(ground_profile, dtype=float)
 
-        # 2. 圆心搜索网格（与 Bishop/Fellenius 一样）
+        # 2. Center search grid (same style as Bishop/Fellenius).
         gx = np.linspace(self.get_float('grid_x_start'), self.get_float('grid_x_end'), int(self.get_float('grid_res')))
         gy = np.linspace(self.get_float('grid_y_start'), self.get_float('grid_y_end'), int(self.get_float('grid_res')))
 
@@ -913,7 +913,7 @@ class SlopeStabilityApp(QMainWindow):
             n_entry = max(3, int(toe / step) + 1)
             entry_x_range = np.linspace(-toe, 0.0, n_entry)
         else:
-            # bottom_extension 非正时退回只在坡趾入口
+            # Fallback to toe-only entry when bottom_extension is non-positive.
             entry_x_range = None
 
         # 3. Janbu GPS circular arc search (entrance point on the slope bottom, require_exit_at_crest=True)

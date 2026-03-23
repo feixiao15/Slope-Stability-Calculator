@@ -124,7 +124,7 @@ class BishopAnalyzer:
 
     def calculate_circle_details(self, center, n_slices, x_entry=0.0):
         """
-        计算指定圆心+入口点对应滑动面的明细，供 GUI 展示 Calculation Details。
+        Compute slice-by-slice details for a given center and entry point.
         """
         xc, yc = map(float, center)
         x_entry = float(x_entry)
@@ -146,7 +146,7 @@ class BishopAnalyzer:
     def _slice_mass(self, center, radius, n_slices, x_entry=0.0):
         """
         Returns: A list of slice properties or None (if arc is invalid)
-        x_entry: 滑动弧在坡底侧的入口 x 坐标；默认 0 表示过坡脚 (slope toe)。
+        x_entry: Toe-side entry x of the slip arc; default 0.0 is the slope toe.
         """
         xc, yc = center
 
@@ -162,7 +162,7 @@ class BishopAnalyzer:
         if x_exit < self.crest_x:
             return None  # Arc exits at the slope surface
 
-        # 入口点：可由调用方指定，不再强制过坡脚
+        # Entry point is caller-controlled and not forced at the toe.
         total_width = x_exit - x_entry
         if total_width <= 0:
             return None
@@ -219,14 +219,14 @@ class BishopAnalyzer:
         center_grid_x (np.array): Range of x-coordinates for the trial circle centers
         center_grid_y (np.array): Range of y-coordinates for the trial circle centers
         plot (bool): Whether to plot the result
-        entry_x_range (array-like or None): 坡底入口点 x 的遍历序列；None 表示仅过坡脚 (0,0)。
-            例如 np.arange(-toe_width, 0.5, interval) 表示在坡底宽度上按 interval 步长遍历。
+        entry_x_range (array-like or None): Candidate toe-entry x values.
+            Example: np.arange(-toe_width, 0.5, interval)
         """
-        # 若显式给定圆心（以及可选入口 x_entry_single），则只计算该圆心对应的滑动面 FoS
+        # If center is explicitly provided, evaluate only that center.
         if center is not None:
             xc, yc = map(float, center)
             if x_entry_single is None:
-                # 未指定入口，则默认过坡脚 (0,0)
+                # Default entry is toe when not provided.
                 x_entry_use = 0.0
             else:
                 x_entry_use = float(x_entry_single)
@@ -257,7 +257,7 @@ class BishopAnalyzer:
 
             return best_circle, fos_results
 
-        # 未指定时保持“过坡脚”约束；指定后在该序列上遍历入口点，解除“过坡脚”约束
+        # Default mode enforces toe entry; range mode scans toe-platform entries.
         if entry_x_range is None:
             entry_x_list = np.array([0.0])
             print("\n--- Starting search (arc through toe) ---")
@@ -270,7 +270,7 @@ class BishopAnalyzer:
         min_fos = np.inf
         best_circle = None
 
-        fos_results = []  # 每个 (xc, yc) 存该组合下所有 entry 中的最小 FoS，用于等高线
+        fos_results = []  # Store min FoS per (xc, yc) for contour plotting.
 
         for xc in center_grid_x:
             for yc in center_grid_y:
@@ -377,10 +377,10 @@ if __name__ == "__main__":
     analyzer = BishopAnalyzer(c_prime, phi_prime, gamma, r_u)
     analyzer.define_slope(height, ratio, toe_width=toe_width)
 
-    # 方式一：仅过坡脚 (0,0)，与原来一致
+    # Option 1: force arc through the toe (0, 0).
     # analyzer.find_critical_fos(n_slices, center_grid_x, center_grid_y, plot)
 
-    # 方式二：去除“过坡脚”约束，对坡底宽度按 interval 遍历入口点
-    interval = 2.0  # 坡底 x 步长 (m)
+    # Option 2: scan entry points along toe width.
+    interval = 2.0  # Toe entry x step (m)
     entry_x_range = np.arange(-toe_width, 0.5, interval)
     best, results = analyzer.find_critical_fos(n_slices, center_grid_x, center_grid_y, plot, entry_x_range=entry_x_range)

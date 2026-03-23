@@ -331,9 +331,9 @@ class TaylorSolver:
         1) Automatically determine whether to use Chart 1 or Chart 2 based on φ, β, D and calculate N;
         2) Then calculate factor of safety using Fs = c / (N * γ * H).
 
-        为了与 GUI `main.py` 中的调用方式兼容，本函数返回 `(Fs, N)` 二元组：
-        - Fs: 安全系数
-        - N : 稳定数
+        For GUI compatibility, this function returns a tuple `(Fs, N)`:
+        - Fs: factor of safety
+        - N : stability number
         """
         # 1. First get N from Taylor chart based on φ, β, D (internally automatically distinguishes Chart 1 / Chart 2)
         N = self.get_stability_number(phi, beta, D)
@@ -378,7 +378,7 @@ def calculate_fos_taylor(c, phi, gamma, H, beta, D=1.0, analyzer=None):
         solver.chart = analyzer
     # Here strictly follows the required parameter set: c, phi, gamma, beta, H, D
     Fs, _N = solver.solve(c, phi, gamma, beta, H, D)
-    # 为向后兼容，旧的 calculate_fos_taylor 仅返回 Fs
+    # Backward compatibility: old interface returns only Fs.
     return Fs
 
 
